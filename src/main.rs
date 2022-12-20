@@ -8,15 +8,39 @@ mod tokenizer {
         global_block: DefaultKey,
     }
 
+    pub enum TokenizerAction {
+        GroupBlock { block: DefaultKey },
+        AssignBlock { block: DefaultKey, to: DefaultKey },
+    }
+
+    #[derive(Debug)]
+    pub enum Token {
+        Block { tokens: Vec<DefaultKey> },
+        VarDef { block_value: DefaultKey },
+        StringVal { value: String },
+    }
+
+    impl Token {
+        pub fn add_token(&mut self, token: DefaultKey) {
+            if let Token::Block { tokens } = self {
+                tokens.push(token);
+            }
+        }
+    }
+
     impl Tokenizer {
         pub fn from_str(code: &str) -> Self {
-            let mut tokens = SlotMap::new();
+            let mut tokens_map = SlotMap::new();
 
             let global_block_token = Token::Block { tokens: Vec::new() };
-            let global_block = tokens.insert(global_block_token);
+            let global_block = tokens_map.insert(global_block_token);
             let mut block_indexes = vec![global_block];
+            let mut actions = vec![TokenizerAction::GroupBlock {
+                block: global_block,
+            }];
 
             let mut i = 0;
+            let mut string_count = 0;
 
             loop {
                 let val = code.chars().nth(i);
@@ -29,19 +53,60 @@ mod tokenizer {
 
                 let current_block = *block_indexes.last().unwrap();
 
-                if val == '{' {
+                if val == '"' {
+                    // String closed
+                    if string_count > 0 {
+                        let last_action = actions.last_mut();
+                        if let Some(TokenizerAction::AssignBlock { block, .. }) = last_action {
+                            let string_val = Token::StringVal {
+                                value: code
+                                    .chars()
+                                    .enumerate()
+                                    .filter(|&(c, _)| c >= string_count && c <= i)
+                                    .map(|(_, e)| e)
+                                    .collect::<String>(),
+                            };
+                            let string_key = tokens_map.insert(string_val);
+
+                            let block_value = tokens_map.get_mut(*block).unwrap();
+                            if let Token::Block { tokens } = block_value {
+                                tokens.push(string_key);
+                            }
+                        }
+                        string_count = 0
+                    } else {
+                        string_count += 1;
+                    }
+                }
+
+                if val == '{' && string_count == 0 {
                     let block = Token::Block { tokens: Vec::new() };
-                    let block_key = tokens.insert(block);
+                    let block_key = tokens_map.insert(block);
+
+                    let last_action = actions.last();
+                    if !matches!(last_action, Some(TokenizerAction::AssignBlock { .. })) {
+                        actions.push(TokenizerAction::GroupBlock { block: block_key })
+                    }
                     block_indexes.push(block_key);
-                    let current_block = tokens.get_mut(current_block).unwrap();
+                    let current_block = tokens_map.get_mut(current_block).unwrap();
                     current_block.add_token(block_key);
 
                     i += 1;
                     continue;
                 }
 
-                if val == '}' {
-                    block_indexes.pop();
+                if val == '}' && string_count == 0 {
+                    let closing_block = actions.last().unwrap();
+                    match closing_block {
+                        TokenizerAction::GroupBlock { .. } => {
+                            block_indexes.pop();
+                            actions.pop();
+                        }
+                        TokenizerAction::AssignBlock { .. } => {
+                            block_indexes.pop();
+                            actions.pop();
+                        }
+                    }
                     i += 1;
                     continue;
                 }
@@ -68,7 +133,7 @@ mod tokenizer {
                             } else if v == '"' {
                                 in_string = !in_string;
                             }
-                            !(v == until && block_indexes == 0 && in_string == false)
+                            !(v == until && block_indexes == 0 && !in_string)
                         })
                         .map(|(_, e)| e)
                         .collect::<String>()
@@ -76,14 +141,22 @@ mod tokenizer {
 
                 if slice_with_size(i, i + 2, code) == "var" {
                     let var_name = slice_until(i + 3, '=', code);
-                    println!("VAR NAME {}", var_name);
-                    let var_val = slice_until(i + 3 + var_name.len(), ';', code);
-                    // TODO: Create some kind of missing tasks backpack 
-                    println!("VAR VAL {}", var_val);
-                    let var_def = Token::VarDef;
-                    let var_key = tokens.insert(var_def);
-                    let current_block = tokens.get_mut(current_block).unwrap();
+
+                    let value_block = Token::Block { tokens: Vec::new() };
+                    let block_key = tokens_map.insert(value_block);
+
+                    let var_def = Token::VarDef {
+                        block_value: block_key,
+                    };
+                    let var_key = tokens_map.insert(var_def);
+                    let current_block = tokens_map.get_mut(current_block).unwrap();
                     current_block.add_token(var_key);
+
+                    actions.push(TokenizerAction::AssignBlock {
+                        block: block_key,
+                        to: var_key,
+                    });
+
                     i += 3 + var_name.len();
                 }
 
@@ -91,7 +164,7 @@ mod tokenizer {
             }
 
             Self {
-                tokens,
+                tokens: tokens_map,
                 global_block,
             }
         }
@@ -107,27 +180,13 @@ mod tokenizer {
             self.tokens.get(key)
         }
     }
-
-    #[derive(Debug)]
-    pub enum Token {
-        Block { tokens: Vec<DefaultKey> },
-        VarDef,
-    }
-
-    impl Token {
-        pub fn add_token(&mut self, token: DefaultKey) {
-            if let Token::Block { tokens } = self {
-                tokens.push(token);
-            }
-        }
-    }
 }
 
 fn main() {
     use tokenizer::*;
 
     let code = r#"
-        var test = {"ja{j{};ajajj"};
+        var test = { "test" "test"};
         { { } }
         { }
         { { { var hola = 1; } } }
@@ -142,19 +201,26 @@ fn main() {
 
     fn iter_block(block: &Token, tokens_map: &Tokenizer) {
         if let Token::Block { tokens } = block {
-            println!("inside of block");
+            println!("-> Inside of block");
             for tok_id in tokens {
                 let tok = tokens_map.get_token(*tok_id).unwrap();
                 match tok {
                     Token::Block { .. } => {
                         iter_block(tok, tokens_map);
                     }
-                    Token::VarDef => {
-                        println!("var def");
+                    Token::VarDef { block_value } => {
+                        let value = tokens_map.get_token(*block_value).unwrap();
+                        if let Token::Block { tokens } = value {
+                            println!(
+                                "== Var definition has a block with {}# statements",
+                                tokens.len()
+                            );
+                        }
                     }
+                    _ => {}
                 }
             }
-            println!("leaving block");
+            println!("<- Leaving block");
         }
     }
 
