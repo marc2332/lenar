@@ -1,4 +1,4 @@
-mod tokenizer {
+pub mod tokenizer {
     pub use slab::Slab;
 
     pub type TokenKey = usize;
@@ -18,6 +18,7 @@ mod tokenizer {
     }
 
     impl Token {
+        #[inline(always)]
         pub fn add_token(&mut self, token: TokenKey) {
             if let Token::Block { tokens } = self {
                 tokens.push(token);
@@ -33,6 +34,7 @@ mod tokenizer {
                 else { Some(&code[start..end]) }
             }
 
+            #[inline(always)]
             fn slice_until(start: usize, until: char, code: &str) -> String {
                 let code = &code[start..];
                 code.chars()
@@ -56,6 +58,11 @@ mod tokenizer {
 
                 if val.is_none() {
                     break;
+                }
+
+                if val == Some(' ') {
+                    i += 1;
+                    continue;
                 }
 
                 let val = val.unwrap();
@@ -113,24 +120,26 @@ mod tokenizer {
                     continue;
                 }
 
-                if slice_with_size(i, i + 3, code) == Some("var") {
-                    let var_name = slice_until(i + 4, '=', code);
-
-                    let value_block = Token::Block { tokens: Vec::new() };
-                    let block_key = tokens_map.insert(value_block);
-
-                    let var_def = Token::VarDef {
-                        block_value: block_key,
-                    };
-                    let var_key = tokens_map.insert(var_def);
-                    let current_block = tokens_map.get_mut(current_block).unwrap();
-                    current_block.add_token(var_key);
-
-                    block_indexes.push(block_key);
-
-                    i += 3 + var_name.len();
-                    continue;
-                }
+                if string_count == 0 {
+                    if slice_with_size(i, i + 3, code) == Some("var") {
+                        let var_name = slice_until(i + 4, '=', code);
+    
+                        let value_block = Token::Block { tokens: Vec::new() };
+                        let block_key = tokens_map.insert(value_block);
+    
+                        let var_def = Token::VarDef {
+                            block_value: block_key,
+                        };
+                        let var_key = tokens_map.insert(var_def);
+                        let current_block = tokens_map.get_mut(current_block).unwrap();
+                        current_block.add_token(var_key);
+    
+                        block_indexes.push(block_key);
+    
+                        i += 4 + var_name.len();
+                        continue;
+                    }
+                }     
 
                 i += 1;
             }
@@ -152,60 +161,4 @@ mod tokenizer {
             self.tokens.get(key)
         }
     }
-}
-
-fn main() {
-    use tokenizer::*;
-
-    let code = r#"
-        var test = { "test" };
-        { { } }
-        { }
-        { { { var hola = "wow"; } } }
-        { }
-    "#;
-
-
-
-
-
-
-
-
-
-
-
-    let tokens_map = Tokenizer::from_str(&code);
-
-    let global_token = tokens_map.get_global();
-    let global_block = tokens_map.get_token(global_token);
-
-    let tok = global_block.unwrap();
-
-    fn iter_block(block: &Token, tokens_map: &Tokenizer, global: bool) {
-        if let Token::Block { tokens } = block {
-            println!("-> Inside of block (global: {})", global);
-            for tok_id in tokens {
-                let tok = tokens_map.get_token(*tok_id).unwrap();
-                match tok {
-                    Token::Block { .. } => {
-                        iter_block(tok, tokens_map, false);
-                    }
-                    Token::VarDef { block_value } => {
-                        let value = tokens_map.get_token(*block_value).unwrap();
-                        if let Token::Block { tokens } = value {
-                            println!(
-                                "== Variable definition has a block with {}# statements",
-                                tokens.len()
-                            );
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            println!("<- Leaving block (global: {})", global);
-        }
-    }
-
-    iter_block(tok, &tokens_map, true);
 }
