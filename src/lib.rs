@@ -30,18 +30,23 @@ pub mod tokenizer {
         pub fn from_str(code: &str) -> Self {
             #[inline(always)]
             fn slice_with_size(start: usize, end: usize, code: &str) -> Option<&str> {
-                if code.len() < end { None }
-                else { Some(&code[start..end]) }
+                if code.len() < end {
+                    None
+                } else {
+                    Some(&code[start..end])
+                }
             }
 
             #[inline(always)]
             fn slice_until(start: usize, until: char, code: &str) -> String {
                 let code = &code[start..];
-                code.chars()
-                    .take_while(|&v| {
-                        v == until
-                    })
-                    .collect::<String>()
+                code.chars().take_while(|&v| v != until).collect::<String>()
+            }
+
+            #[inline(always)]
+            fn find_pos_until_is_not_char(start: usize, until: char, code: &str) -> usize {
+                let code = &code[start..];
+                code.chars().take_while(|&v| v == until).count() + start
             }
 
             let mut tokens_map = Slab::new();
@@ -61,7 +66,7 @@ pub mod tokenizer {
                 }
 
                 if val == Some(' ') {
-                    i += 1;
+                    i = find_pos_until_is_not_char(i, ' ', code);
                     continue;
                 }
 
@@ -123,23 +128,22 @@ pub mod tokenizer {
                 if string_count == 0 {
                     if slice_with_size(i, i + 3, code) == Some("var") {
                         let var_name = slice_until(i + 4, '=', code);
-    
                         let value_block = Token::Block { tokens: Vec::new() };
                         let block_key = tokens_map.insert(value_block);
-    
+
                         let var_def = Token::VarDef {
                             block_value: block_key,
                         };
                         let var_key = tokens_map.insert(var_def);
                         let current_block = tokens_map.get_mut(current_block).unwrap();
                         current_block.add_token(var_key);
-    
+
                         block_indexes.push(block_key);
-    
+
                         i += 4 + var_name.len();
                         continue;
                     }
-                }     
+                }
 
                 i += 1;
             }
