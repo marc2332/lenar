@@ -12,9 +12,7 @@ pub fn parser_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("sample-size-example");
     group.significance_level(0.1).sample_size(10);
 
-    group.bench_function("parse 1000 lines", |b| {
-        b.iter(|| Tokenizer::from_str(&code))
-    });
+    group.bench_function("parse 5000 lines", |b| b.iter(|| Tokenizer::new(&code)));
 }
 
 criterion_group!(benches, parser_benchmark);

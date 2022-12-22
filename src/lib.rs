@@ -1,4 +1,6 @@
 pub mod tokenizer {
+    use std::str::Chars;
+
     pub use slab::Slab;
 
     pub type TokenKey = usize;
@@ -26,47 +28,56 @@ pub mod tokenizer {
         }
     }
 
+    #[inline(always)]
+    fn slice_with_size(start: usize, end: usize, code: &str) -> Option<&str> {
+        if code.len() < end {
+            None
+        } else {
+            Some(&code[start..end])
+        }
+    }
+
+    #[inline(always)]
+    fn slice_until(start: usize, until: char, code: &str) -> String {
+        let code = &code[start..];
+        code.chars().take_while(|&v| v != until).collect::<String>()
+    }
+
+    #[inline(always)]
+    fn find_pos_until_is_not_char(start: usize, until: char, code: &str) -> usize {
+        let code = &code[start..];
+        code.chars().take_while(|&v| v == until).count() - 1
+    }
+
     impl Tokenizer {
-        pub fn from_str(code: &str) -> Self {
-            #[inline(always)]
-            fn slice_with_size(start: usize, end: usize, code: &str) -> Option<&str> {
-                if code.len() < end {
-                    None
-                } else {
-                    Some(&code[start..end])
-                }
-            }
-
-            #[inline(always)]
-            fn slice_until(start: usize, until: char, code: &str) -> String {
-                let code = &code[start..];
-                code.chars().take_while(|&v| v != until).collect::<String>()
-            }
-
-            #[inline(always)]
-            fn find_pos_until_is_not_char(start: usize, until: char, code: &str) -> usize {
-                let code = &code[start..];
-                code.chars().take_while(|&v| v == until).count() + start
-            }
-
+        pub fn new(code: &str) -> Self {
             let mut tokens_map = Slab::new();
 
             let global_block_token = Token::Block { tokens: Vec::new() };
             let global_block = tokens_map.insert(global_block_token);
             let mut block_indexes = vec![global_block];
 
-            let mut i = 0;
             let mut string_count = 0;
 
+            let len = code.len();
+            let mut chars = code.chars();
+
+            fn advance_by(how_much: usize, chars: &mut Chars) {
+                for _ in 0..how_much {
+                    chars.next();
+                }
+            }
+
             loop {
-                let val = code.chars().nth(i);
+                let i = len - chars.size_hint().1.unwrap();
+                let val = chars.next();
 
                 if val.is_none() {
                     break;
                 }
 
                 if val == Some(' ') {
-                    i = find_pos_until_is_not_char(i, ' ', code);
+                    advance_by(find_pos_until_is_not_char(i, ' ', code), &mut chars);
                     continue;
                 }
 
@@ -78,7 +89,6 @@ pub mod tokenizer {
                     if string_count == 0 {
                         block_indexes.pop();
                     }
-                    i += 1;
                     continue;
                 }
 
@@ -103,7 +113,6 @@ pub mod tokenizer {
                     } else {
                         string_count += 1;
                     }
-                    i += 1;
                     continue;
                 }
 
@@ -115,37 +124,30 @@ pub mod tokenizer {
                     let current_block = tokens_map.get_mut(current_block).unwrap();
                     current_block.add_token(block_key);
 
-                    i += 1;
                     continue;
                 }
 
                 if val == '}' && string_count == 0 {
                     block_indexes.pop();
-                    i += 1;
                     continue;
                 }
 
-                if string_count == 0 {
-                    if slice_with_size(i, i + 3, code) == Some("var") {
-                        let var_name = slice_until(i + 4, '=', code);
-                        let value_block = Token::Block { tokens: Vec::new() };
-                        let block_key = tokens_map.insert(value_block);
+                if string_count == 0 && slice_with_size(i, i + 3, code) == Some("var") {
+                    let var_name = slice_until(i + 4, '=', code);
+                    let value_block = Token::Block { tokens: Vec::new() };
+                    let block_key = tokens_map.insert(value_block);
 
-                        let var_def = Token::VarDef {
-                            block_value: block_key,
-                        };
-                        let var_key = tokens_map.insert(var_def);
-                        let current_block = tokens_map.get_mut(current_block).unwrap();
-                        current_block.add_token(var_key);
+                    let var_def = Token::VarDef {
+                        block_value: block_key,
+                    };
+                    let var_key = tokens_map.insert(var_def);
+                    let current_block = tokens_map.get_mut(current_block).unwrap();
+                    current_block.add_token(var_key);
 
-                        block_indexes.push(block_key);
-
-                        i += 4 + var_name.len();
-                        continue;
-                    }
+                    block_indexes.push(block_key);
+                    advance_by(4 + var_name.len(), &mut chars);
+                    continue;
                 }
-
-                i += 1;
             }
 
             Self {

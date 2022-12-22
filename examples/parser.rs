@@ -11,7 +11,7 @@ fn main() {
         { }
     "#;
 
-    let tokens_map = Tokenizer::from_str(&code);
+    let tokens_map = Tokenizer::new(&code);
 
     let global_token = tokens_map.get_global();
     let global_block = tokens_map.get_token(global_token);
