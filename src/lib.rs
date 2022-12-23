@@ -24,6 +24,10 @@ pub mod tokenizer {
         StringVal {
             value: String,
         },
+        FunctionCall {
+            fn_name: String,
+            arguments: TokenKey,
+        },
     }
 
     impl Token {
@@ -52,7 +56,7 @@ pub mod tokenizer {
     #[inline(always)]
     fn find_pos_until_is_not_char(start: usize, until: char, code: &str) -> usize {
         let code = &code[start..];
-        code.chars().take_while(|&v| v == until).count() - 1
+        code.chars().take_while(|&v| v == until).count()
     }
 
     enum PerfomedAction {
@@ -64,6 +68,7 @@ pub mod tokenizer {
         OpenedString,
         ClosedString,
         FoundOperator(char),
+        CalledFunction,
     }
 
     impl Tokenizer {
@@ -88,14 +93,16 @@ pub mod tokenizer {
 
             loop {
                 let i = len - chars.size_hint().1.unwrap();
+
                 let val = chars.next();
 
                 if val.is_none() {
                     break;
                 }
 
-                if val == Some(' ') {
-                    advance_by(find_pos_until_is_not_char(i, ' ', code), &mut chars);
+                // Skip spaces
+                if val == Some(' ') || val == Some('\n') {
+                    advance_by(find_pos_until_is_not_char(i + 1, ' ', code), &mut chars);
                     continue;
                 }
 
@@ -103,6 +110,12 @@ pub mod tokenizer {
 
                 let current_block = *block_indexes.last().unwrap();
 
+                if val == ')' && string_count == 0 {
+                    block_indexes.pop();
+                    continue;
+                }
+
+                // Check operator syntax
                 if val == '=' {
                     if matches!(last_action, PerfomedAction::DefinedVariable) {
                         last_action = PerfomedAction::FoundOperator('=');
@@ -112,6 +125,7 @@ pub mod tokenizer {
                     continue;
                 }
 
+                // End a statement
                 if val == ';' {
                     if string_count == 0 {
                         block_indexes.pop();
@@ -142,6 +156,7 @@ pub mod tokenizer {
                     continue;
                 }
 
+                // Start a block
                 if val == '{' && string_count == 0 {
                     let block = Token::Block { tokens: Vec::new() };
                     let block_key = tokens_map.insert(block);
@@ -155,13 +170,15 @@ pub mod tokenizer {
                     continue;
                 }
 
+                // Closing a block
                 if val == '}' && string_count == 0 {
                     block_indexes.pop();
                     last_action = PerfomedAction::ClosedBlock;
                     continue;
                 }
 
-                if string_count == 0 && slice_with_size(i, i + 3, code) == Some("var") {
+                // Variable declarations
+                if string_count == 0 && slice_with_size(i, i + 3, code) == Some("let") {
                     advance_by(3, &mut chars);
                     let var_name = slice_until(' ', &mut chars);
                     let value_block = Token::Block { tokens: Vec::new() };
@@ -185,6 +202,30 @@ pub mod tokenizer {
 
                 if string_count > 0 {
                     string_count += 1;
+                    continue;
+                }
+
+                if string_count == 0 {
+                    let fn_name = slice_until('(', &mut chars);
+                    let fn_name = format!("{}{}", val, fn_name);
+
+                    let value_block = Token::Block { tokens: Vec::new() };
+                    let block_key = tokens_map.insert(value_block);
+
+                    let fn_def = Token::FunctionCall {
+                        fn_name,
+                        arguments: block_key,
+                    };
+                    let fn_key = tokens_map.insert(fn_def);
+
+                    let current_block = tokens_map.get_mut(current_block).unwrap();
+                    current_block.add_token(fn_key);
+
+                    block_indexes.push(block_key);
+
+                    last_action = PerfomedAction::CalledFunction;
+
+                    continue;
                 }
             }
 

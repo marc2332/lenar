@@ -5,7 +5,7 @@ pub fn parser_benchmark(c: &mut Criterion) {
     use tokenizer::*;
 
     let code = r#"
-        var test = { { "test" } };
+        let test = { { "test" } };
     "#
     .repeat(5000);
 

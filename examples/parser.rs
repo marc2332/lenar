@@ -4,11 +4,11 @@ fn main() {
     use tokenizer::*;
 
     let code = r#"
-        var test = "test";
-        { { } }
-        { }
-        { { { var hola = "wow"; } } }
-        { }
+        let test = hola("1" "wooow");
+        {
+            let test2 = yo("2" "hola");
+            alright("ok")
+        }
     "#;
 
     let tokens_map = Tokenizer::new(&code);
@@ -33,15 +33,53 @@ fn main() {
                     } => {
                         let value = tokens_map.get_token(*block_value).unwrap();
                         if let Token::Block { tokens } = value {
-                            let mut var_val = None;
                             let val = tokens.last().unwrap();
                             let val = tokens_map.get_token(*val);
                             if let Some(val) = val {
-                                if let Token::StringVal { value } = val {
-                                    var_val = Some(value);
+                                match val {
+                                    Token::StringVal { value } => {
+                                        println!(
+                                            "DEF: Variable <{}> has value of {:?}",
+                                            var_name, value
+                                        );
+                                    }
+                                    Token::FunctionCall { fn_name, arguments } => {
+                                        let value = tokens_map.get_token(*arguments).unwrap();
+                                        if let Token::Block { tokens } = value {
+                                            let mut var_vals = Vec::new();
+                                            for val in tokens {
+                                                let val = tokens_map.get_token(*val);
+                                                if let Some(val) = val {
+                                                    if let Token::StringVal { value } = val {
+                                                        var_vals.push(value)
+                                                    }
+                                                }
+                                            }
+                                            println!("DEF: Variable <{}> with value of calling {:?} with arguments {:?}", var_name, fn_name, var_vals);
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
-                            println!("== Variable <{}> has value of {:?}", var_name, var_val);
+                        }
+                    }
+                    Token::FunctionCall { arguments, fn_name } => {
+                        let value = tokens_map.get_token(*arguments).unwrap();
+                        if let Token::Block { tokens } = value {
+                            let mut var_vals = Vec::new();
+                            for val in tokens {
+                                let val = tokens_map.get_token(*val);
+                                if let Some(val) = val {
+                                    if let Token::StringVal { value } = val {
+                                        var_vals.push(value)
+                                    }
+                                }
+                            }
+
+                            println!(
+                                "CALL: Function call <{}> with arguments {:?}",
+                                fn_name, var_vals
+                            );
                         }
                     }
                     _ => {}
