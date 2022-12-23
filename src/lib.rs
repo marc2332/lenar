@@ -100,7 +100,7 @@ pub mod tokenizer {
                     break;
                 }
 
-                // Skip spaces
+                // Skip spaces and line breaks
                 if string_count == 0 && (val == Some(' ') || val == Some('\n')) {
                     advance_by(find_pos_until_is_not_char(i + 1, ' ', code), &mut chars);
                     continue;
@@ -109,7 +109,8 @@ pub mod tokenizer {
                 let val = val.unwrap();
 
                 let current_block = *block_indexes.last().unwrap();
-
+                
+                // TODO closing parenthesis should only close the last `arguments` block not an actual code block
                 if val == ')' && string_count == 0 {
                     block_indexes.pop();
                     continue;
