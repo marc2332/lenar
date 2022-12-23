@@ -1,15 +1,4 @@
-demo:
+# lenar - an incredibly fast programming language
 
-
-```
-
-test |a| {
-
-}
-	
-
-main {
-	val = "test"
-	print(val)
-}
-```
+- v8-like snaphots
+- runtime
