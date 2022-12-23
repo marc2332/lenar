@@ -109,7 +109,7 @@ pub mod tokenizer {
                 let val = val.unwrap();
 
                 let current_block = *block_indexes.last().unwrap();
-                
+
                 // TODO closing parenthesis should only close the last `arguments` block not an actual code block
                 if val == ')' && string_count == 0 {
                     block_indexes.pop();
@@ -245,6 +245,143 @@ pub mod tokenizer {
         #[inline(always)]
         pub fn get_token(&self, key: TokenKey) -> Option<&Token> {
             self.tokens.get(key)
+        }
+    }
+}
+
+pub mod vm {
+    use std::{
+        collections::HashMap,
+        io::{stdout, Write},
+    };
+
+    use crate::tokenizer::{Token, Tokenizer};
+
+    pub struct VM {
+        tokenizer: Tokenizer,
+    }
+
+    impl VM {
+        pub fn new(tokenizer: Tokenizer) -> Self {
+            Self { tokenizer }
+        }
+
+        pub fn run(&self) {
+            let mut context = Context::new();
+
+            context.setup_globals();
+
+            let global_token = self.tokenizer.get_global();
+            let global_block = self.tokenizer.get_token(global_token);
+
+            let tok = global_block.unwrap();
+
+            compute_expr(tok, &self.tokenizer, &mut context);
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum VMType {
+        List(Vec<VMType>),
+        String(String),
+        Void,
+    }
+
+    pub trait VMFunction {
+        fn call(&mut self, _args: &Vec<VMType>) {
+            panic!("This is not a function.")
+        }
+    }
+
+    pub struct Context {
+        functions: HashMap<usize, HashMap<String, Box<dyn VMFunction>>>,
+    }
+
+    impl Context {
+        pub fn new() -> Self {
+            Self {
+                functions: HashMap::default(),
+            }
+        }
+
+        pub fn setup_globals(&mut self) {
+            self.functions.insert(0, HashMap::default());
+
+            let global_scope = self.functions.get_mut(&0).unwrap();
+
+            struct PrintFunc;
+
+            impl VMFunction for PrintFunc {
+                fn call(&mut self, args: &Vec<VMType>) {
+                    args.iter().for_each(|v| {
+                        if let VMType::String(string) = &v {
+                            stdout().write(string.as_bytes()).unwrap();
+                        }
+                    });
+                    stdout().flush().unwrap();
+                }
+            }
+
+            global_scope.insert("print".to_string(), Box::new(PrintFunc));
+        }
+
+        pub fn call_function(
+            &mut self,
+            name: impl AsRef<str>,
+            scope_id: Option<usize>,
+            args: &Vec<VMType>,
+        ) -> VMType {
+            let scope_id = scope_id.unwrap_or(0);
+
+            let scope = self.functions.get_mut(&scope_id);
+
+            if let Some(scope) = scope {
+                let func = scope.get_mut(name.as_ref());
+                if let Some(func) = func {
+                    func.call(args)
+                }
+            }
+
+            VMType::Void
+        }
+    }
+
+    fn compute_expr(token: &Token, tokens_map: &Tokenizer, context: &mut Context) -> VMType {
+        match token {
+            Token::Block { tokens } => {
+                for (i, tok) in tokens.iter().enumerate() {
+                    let is_last = i == tokens.len() - 1;
+                    let tok = tokens_map.get_token(*tok).unwrap();
+                    let res = compute_expr(tok, tokens_map, context);
+                    if is_last {
+                        return res;
+                    }
+                }
+
+                VMType::Void
+            }
+            Token::VarDef { .. } => {
+                //let value = tokens_map.get_token(*block_value).unwrap();
+                //let res = compute_expr(value,tokens_map, context);
+
+                VMType::Void
+            }
+            Token::FunctionCall { arguments, fn_name } => {
+                let value = tokens_map.get_token(*arguments).unwrap();
+                let mut args = Vec::new();
+                if let Token::Block { tokens } = value {
+                    for tok in tokens {
+                        let tok = tokens_map.get_token(*tok).unwrap();
+                        let res = compute_expr(tok, tokens_map, context);
+                        args.push(res);
+                    }
+                }
+
+                context.call_function(&fn_name, None, &args);
+
+                VMType::Void
+            }
+            Token::StringVal { value } => VMType::String(value.to_string()),
         }
     }
 }
