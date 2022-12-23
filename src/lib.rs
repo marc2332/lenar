@@ -101,7 +101,7 @@ pub mod tokenizer {
                 }
 
                 // Skip spaces
-                if val == Some(' ') || val == Some('\n') {
+                if string_count == 0 && (val == Some(' ') || val == Some('\n')) {
                     advance_by(find_pos_until_is_not_char(i + 1, ' ', code), &mut chars);
                     continue;
                 }

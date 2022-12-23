@@ -7,7 +7,9 @@ fn main() {
         let test = hola("1" "wooow");
         {
             let test2 = yo("2" "hola");
-            alright("ok")
+            alright("
+                ok
+            ")
         }
     "#;
 
