@@ -4,7 +4,7 @@ fn main() {
     use tokenizer::*;
 
     let code = r#"
-        var test = { "test" };
+        var test = "test";
         { { } }
         { }
         { { { var hola = "wow"; } } }
@@ -27,13 +27,21 @@ fn main() {
                     Token::Block { .. } => {
                         iter_block(tok, tokens_map, false);
                     }
-                    Token::VarDef { block_value } => {
+                    Token::VarDef {
+                        block_value,
+                        var_name,
+                    } => {
                         let value = tokens_map.get_token(*block_value).unwrap();
                         if let Token::Block { tokens } = value {
-                            println!(
-                                "== Variable definition has a block with {}# statements",
-                                tokens.len()
-                            );
+                            let mut var_val = None;
+                            let val = tokens.last().unwrap();
+                            let val = tokens_map.get_token(*val);
+                            if let Some(val) = val {
+                                if let Token::StringVal { value } = val {
+                                    var_val = Some(value);
+                                }
+                            }
+                            println!("== Variable <{}> has value of {:?}", var_name, var_val);
                         }
                     }
                     _ => {}

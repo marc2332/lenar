@@ -8,13 +8,9 @@ fn main() {
     let now = Instant::now();
 
     let code = r#"
-        var test = { "test" };
-        { { } }
-        { }
-        { { { var hola = "wow"; } } }
-        { }
+        var test = { { "test" } };
     "#
-    .repeat(1000);
+    .repeat(20000000);
 
     Tokenizer::new(&code);
 

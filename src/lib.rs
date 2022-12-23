@@ -14,9 +14,16 @@ pub mod tokenizer {
 
     #[derive(Debug)]
     pub enum Token {
-        Block { tokens: Vec<TokenKey> },
-        VarDef { block_value: TokenKey },
-        StringVal { value: String },
+        Block {
+            tokens: Vec<TokenKey>,
+        },
+        VarDef {
+            block_value: TokenKey,
+            var_name: String,
+        },
+        StringVal {
+            value: String,
+        },
     }
 
     impl Token {
@@ -38,9 +45,8 @@ pub mod tokenizer {
     }
 
     #[inline(always)]
-    fn slice_until(start: usize, until: char, code: &str) -> String {
-        let code = &code[start..];
-        code.chars().take_while(|&v| v != until).collect::<String>()
+    fn slice_until(until: char, code: &mut Chars) -> String {
+        code.take_while(|&v| v != until).collect::<String>()
     }
 
     #[inline(always)]
@@ -49,15 +55,27 @@ pub mod tokenizer {
         code.chars().take_while(|&v| v == until).count() - 1
     }
 
+    enum PerfomedAction {
+        EnteredGlobalScope,
+        DefinedVariable,
+        OpenedBlock,
+        ClosedBlock,
+        ClosedStatement,
+        OpenedString,
+        ClosedString,
+        FoundOperator(char),
+    }
+
     impl Tokenizer {
         pub fn new(code: &str) -> Self {
             let mut tokens_map = Slab::new();
 
             let global_block_token = Token::Block { tokens: Vec::new() };
             let global_block = tokens_map.insert(global_block_token);
-            let mut block_indexes = vec![global_block];
 
+            let mut block_indexes = vec![global_block];
             let mut string_count = 0;
+            let mut last_action = PerfomedAction::EnteredGlobalScope;
 
             let len = code.len();
             let mut chars = code.chars();
@@ -85,9 +103,19 @@ pub mod tokenizer {
 
                 let current_block = *block_indexes.last().unwrap();
 
+                if val == '=' {
+                    if matches!(last_action, PerfomedAction::DefinedVariable) {
+                        last_action = PerfomedAction::FoundOperator('=');
+                    } else {
+                        panic!("Syntax error: Operator '=' is used to define initial values to variables.")
+                    }
+                    continue;
+                }
+
                 if val == ';' {
                     if string_count == 0 {
                         block_indexes.pop();
+                        last_action = PerfomedAction::ClosedStatement;
                     }
                     continue;
                 }
@@ -96,21 +124,19 @@ pub mod tokenizer {
                     // String closed
                     if string_count > 0 {
                         let string_val = Token::StringVal {
-                            value: code
-                                .chars()
-                                .enumerate()
-                                .filter(|&(c, _)| c >= string_count && c <= i)
-                                .map(|(_, e)| e)
-                                .collect::<String>(),
+                            value: code[i - string_count + 1..i].chars().collect::<String>(),
                         };
+
                         let string_key = tokens_map.insert(string_val);
 
                         let block_value = tokens_map.get_mut(current_block).unwrap();
                         if let Token::Block { tokens } = block_value {
                             tokens.push(string_key);
                         }
+                        last_action = PerfomedAction::ClosedString;
                         string_count = 0
                     } else {
+                        last_action = PerfomedAction::OpenedString;
                         string_count += 1;
                     }
                     continue;
@@ -124,29 +150,41 @@ pub mod tokenizer {
                     let current_block = tokens_map.get_mut(current_block).unwrap();
                     current_block.add_token(block_key);
 
+                    last_action = PerfomedAction::OpenedBlock;
+
                     continue;
                 }
 
                 if val == '}' && string_count == 0 {
                     block_indexes.pop();
+                    last_action = PerfomedAction::ClosedBlock;
                     continue;
                 }
 
                 if string_count == 0 && slice_with_size(i, i + 3, code) == Some("var") {
-                    let var_name = slice_until(i + 4, '=', code);
+                    advance_by(3, &mut chars);
+                    let var_name = slice_until(' ', &mut chars);
                     let value_block = Token::Block { tokens: Vec::new() };
                     let block_key = tokens_map.insert(value_block);
 
                     let var_def = Token::VarDef {
                         block_value: block_key,
+                        var_name,
                     };
                     let var_key = tokens_map.insert(var_def);
+
                     let current_block = tokens_map.get_mut(current_block).unwrap();
                     current_block.add_token(var_key);
 
                     block_indexes.push(block_key);
-                    advance_by(4 + var_name.len(), &mut chars);
+
+                    last_action = PerfomedAction::DefinedVariable;
+
                     continue;
+                }
+
+                if string_count > 0 {
+                    string_count += 1;
                 }
             }
 
