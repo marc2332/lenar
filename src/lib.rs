@@ -24,6 +24,9 @@ pub mod tokenizer {
         StringVal {
             value: String,
         },
+        BytesVal {
+            value: Vec<u8>,
+        },
         FunctionCall {
             fn_name: String,
             arguments: TokenKey,
@@ -138,8 +141,12 @@ pub mod tokenizer {
                 if val == '"' {
                     // String closed
                     if string_count > 0 {
-                        let string_val = Token::StringVal {
-                            value: code[i - string_count + 1..i].chars().collect::<String>(),
+                        let string_val = Token::BytesVal {
+                            value: code[i - string_count + 1..i]
+                                .chars()
+                                .collect::<String>()
+                                .as_bytes()
+                                .to_vec(),
                         };
 
                         let string_key = tokens_map.insert(string_val);
@@ -267,7 +274,7 @@ pub mod vm {
         }
 
         pub fn run(&self) {
-            let mut context = Context::new();
+            let mut context = Context::default();
 
             context.setup_globals();
 
@@ -281,55 +288,68 @@ pub mod vm {
     }
 
     #[derive(Debug)]
-    pub enum VMType {
-        List(Vec<VMType>),
+    pub enum VMType<'a> {
+        List(Vec<VMType<'a>>),
         String(String),
+        Bytes(&'a [u8]),
         Void,
     }
 
     pub trait VMFunction {
-        fn call(&mut self, _args: &Vec<VMType>) {
+        fn call(&mut self, _args: &[VMType]) {
             panic!("This is not a function.")
         }
     }
 
+    #[derive(Default)]
     pub struct Context {
-        functions: HashMap<usize, HashMap<String, Box<dyn VMFunction>>>,
+        functions: HashMap<usize, HashMap<String, Box<dyn VMFunction>>>, // TODO simplify by making a big giant chunk instead of nested hashmap
     }
 
     impl Context {
-        pub fn new() -> Self {
-            Self {
-                functions: HashMap::default(),
-            }
-        }
-
         pub fn setup_globals(&mut self) {
             self.functions.insert(0, HashMap::default());
 
             let global_scope = self.functions.get_mut(&0).unwrap();
 
+            // PRINT
             struct PrintFunc;
 
             impl VMFunction for PrintFunc {
-                fn call(&mut self, args: &Vec<VMType>) {
-                    args.iter().for_each(|v| {
-                        if let VMType::String(string) = &v {
-                            stdout().write(string.as_bytes()).unwrap();
+                fn call(&mut self, args: &[VMType]) {
+                    for val in args {
+                        if let VMType::Bytes(bts) = val {
+                            stdout().write(bts).ok();
                         }
-                    });
-                    stdout().flush().unwrap();
+                    }
+                    stdout().flush().ok();
+                }
+            }
+
+            // PRINTLN
+            struct PrintLnFunc;
+
+            impl VMFunction for PrintLnFunc {
+                fn call(&mut self, args: &[VMType]) {
+                    for val in args {
+                        if let VMType::Bytes(bts) = val {
+                            stdout().write(bts).ok();
+                        }
+                    }
+                    stdout().write("\n".as_bytes()).ok();
+                    stdout().flush().ok();
                 }
             }
 
             global_scope.insert("print".to_string(), Box::new(PrintFunc));
+            global_scope.insert("println".to_string(), Box::new(PrintLnFunc));
         }
 
         pub fn call_function(
             &mut self,
             name: impl AsRef<str>,
             scope_id: Option<usize>,
-            args: &Vec<VMType>,
+            args: &[VMType],
         ) -> VMType {
             let scope_id = scope_id.unwrap_or(0);
 
@@ -339,14 +359,22 @@ pub mod vm {
                 let func = scope.get_mut(name.as_ref());
                 if let Some(func) = func {
                     func.call(args)
+                } else {
+                    panic!("Function '{}' is not defined in this scope.", name.as_ref());
                 }
+            } else {
+                panic!("Scope is removed");
             }
 
             VMType::Void
         }
     }
 
-    fn compute_expr(token: &Token, tokens_map: &Tokenizer, context: &mut Context) -> VMType {
+    fn compute_expr<'a>(
+        token: &'a Token,
+        tokens_map: &'a Tokenizer,
+        context: &mut Context,
+    ) -> VMType<'a> {
         match token {
             Token::Block { tokens } => {
                 for (i, tok) in tokens.iter().enumerate() {
@@ -377,11 +405,12 @@ pub mod vm {
                     }
                 }
 
-                context.call_function(&fn_name, None, &args);
+                context.call_function(fn_name, None, &args);
 
                 VMType::Void
             }
             Token::StringVal { value } => VMType::String(value.to_string()),
+            Token::BytesVal { value } => VMType::Bytes(value),
         }
     }
 }

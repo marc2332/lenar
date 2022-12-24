@@ -5,9 +5,8 @@ fn main() {
     use vm::*;
 
     let code = r#"
-       print({
-        let idk = "dasda";
-
+       println({
+        println("hey")
         "nice"
        })
     "#;

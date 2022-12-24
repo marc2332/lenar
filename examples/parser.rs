@@ -39,7 +39,7 @@ fn main() {
                             let val = tokens_map.get_token(*val);
                             if let Some(val) = val {
                                 match val {
-                                    Token::StringVal { value } => {
+                                    Token::BytesVal { value } => {
                                         println!(
                                             "DEF: Variable <{}> has value of {:?}",
                                             var_name, value
@@ -52,8 +52,11 @@ fn main() {
                                             for val in tokens {
                                                 let val = tokens_map.get_token(*val);
                                                 if let Some(val) = val {
-                                                    if let Token::StringVal { value } = val {
-                                                        var_vals.push(value)
+                                                    if let Token::BytesVal { value } = val {
+                                                        var_vals.push(
+                                                            String::from_utf8(value.to_vec())
+                                                                .unwrap(),
+                                                        )
                                                     }
                                                 }
                                             }
@@ -72,8 +75,8 @@ fn main() {
                             for val in tokens {
                                 let val = tokens_map.get_token(*val);
                                 if let Some(val) = val {
-                                    if let Token::StringVal { value } = val {
-                                        var_vals.push(value)
+                                    if let Token::BytesVal { value } = val {
+                                        var_vals.push(String::from_utf8(value.to_vec()).unwrap())
                                     }
                                 }
                             }
