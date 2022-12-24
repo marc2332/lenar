@@ -5,10 +5,8 @@ fn main() {
     use vm::*;
 
     let code = r#"
-       println({
-        println("hey")
-        "nice"
-       })
+        let test = "Hello World!";
+        println(test);
     "#;
 
     let tokenizer = Tokenizer::new(&code);

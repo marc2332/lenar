@@ -31,6 +31,9 @@ pub mod tokenizer {
             fn_name: String,
             arguments: TokenKey,
         },
+        VarRef {
+            var_name: String,
+        },
     }
 
     impl Token {
@@ -57,9 +60,25 @@ pub mod tokenizer {
     }
 
     #[inline(always)]
+    fn slice_until_delimeter(code: &mut Chars) -> String {
+        let until = [',', ';', ')'];
+        code.take_while(|&v| !until.contains(&v))
+            .collect::<String>()
+    }
+
+    #[inline(always)]
     fn find_pos_until_is_not_char(start: usize, until: char, code: &str) -> usize {
         let code = &code[start..];
         code.chars().take_while(|&v| v == until).count()
+    }
+
+    #[inline(always)]
+    fn count_unexpected_between(start: usize, until: char, code: &str) -> usize {
+        let code = &code[start..];
+        code.chars()
+            .take_while(|&v| v != until)
+            .filter(|v| v.is_whitespace())
+            .count()
     }
 
     enum PerfomedAction {
@@ -72,6 +91,7 @@ pub mod tokenizer {
         ClosedString,
         FoundOperator(char),
         CalledFunction,
+        ReferencedVariable,
     }
 
     impl Tokenizer {
@@ -214,26 +234,44 @@ pub mod tokenizer {
                 }
 
                 if string_count == 0 {
-                    let fn_name = slice_until('(', &mut chars);
-                    let fn_name = format!("{}{}", val, fn_name);
+                    // is a function call
+                    if count_unexpected_between(i, '(', code) == 0 {
+                        let item_name = slice_until('(', &mut chars);
+                        let item_name = format!("{}{}", val, item_name);
 
-                    let value_block = Token::Block { tokens: Vec::new() };
-                    let block_key = tokens_map.insert(value_block);
+                        let value_block = Token::Block { tokens: Vec::new() };
+                        let block_key = tokens_map.insert(value_block);
 
-                    let fn_def = Token::FunctionCall {
-                        fn_name,
-                        arguments: block_key,
-                    };
-                    let fn_key = tokens_map.insert(fn_def);
+                        let fn_def = Token::FunctionCall {
+                            fn_name: item_name,
+                            arguments: block_key,
+                        };
+                        let fn_key = tokens_map.insert(fn_def);
 
-                    let current_block = tokens_map.get_mut(current_block).unwrap();
-                    current_block.add_token(fn_key);
+                        let current_block = tokens_map.get_mut(current_block).unwrap();
+                        current_block.add_token(fn_key);
 
-                    block_indexes.push(block_key);
+                        block_indexes.push(block_key);
 
-                    last_action = PerfomedAction::CalledFunction;
+                        last_action = PerfomedAction::CalledFunction;
 
-                    continue;
+                        continue;
+                    } else {
+                        let item_name = slice_until_delimeter(&mut chars);
+                        let item_name = format!("{}{}", val, item_name);
+
+                        let var_ref = Token::VarRef {
+                            var_name: item_name,
+                        };
+                        let var_ref_key = tokens_map.insert(var_ref);
+
+                        let current_block = tokens_map.get_mut(current_block).unwrap();
+                        current_block.add_token(var_ref_key);
+
+                        last_action = PerfomedAction::ReferencedVariable;
+
+                        continue;
+                    }
                 }
             }
 
@@ -287,7 +325,7 @@ pub mod vm {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub enum VMType<'a> {
         List(Vec<VMType<'a>>),
         String(String),
@@ -302,12 +340,14 @@ pub mod vm {
     }
 
     #[derive(Default)]
-    pub struct Context {
+    pub struct Context<'a> {
+        variables: HashMap<usize, HashMap<String, VMType<'a>>>,
         functions: HashMap<usize, HashMap<String, Box<dyn VMFunction>>>, // TODO simplify by making a big giant chunk instead of nested hashmap
     }
 
-    impl Context {
+    impl<'a> Context<'a> {
         pub fn setup_globals(&mut self) {
+            self.variables.insert(0, HashMap::default());
             self.functions.insert(0, HashMap::default());
 
             let global_scope = self.functions.get_mut(&0).unwrap();
@@ -368,12 +408,45 @@ pub mod vm {
 
             VMType::Void
         }
+
+        pub fn define_variable(
+            &mut self,
+            name: impl AsRef<str>,
+            scope_id: Option<usize>,
+            value: VMType<'a>,
+        ) {
+            let scope_id = scope_id.unwrap_or(0);
+
+            let scope = self.variables.get_mut(&scope_id);
+
+            if let Some(scope) = scope {
+                scope.insert(name.as_ref().to_string(), value);
+            } else {
+                panic!("Scope is removed");
+            }
+        }
+
+        pub fn get_variable(
+            &mut self,
+            name: impl AsRef<str>,
+            scope_id: Option<usize>,
+        ) -> VMType<'a> {
+            let scope_id = scope_id.unwrap_or(0);
+
+            let scope = self.variables.get_mut(&scope_id);
+
+            if let Some(scope) = scope {
+                scope.get(name.as_ref()).cloned().unwrap_or(VMType::Void)
+            } else {
+                panic!("Scope is removed");
+            }
+        }
     }
 
     fn compute_expr<'a>(
         token: &'a Token,
         tokens_map: &'a Tokenizer,
-        context: &mut Context,
+        context: &mut Context<'a>,
     ) -> VMType<'a> {
         match token {
             Token::Block { tokens } => {
@@ -388,9 +461,14 @@ pub mod vm {
 
                 VMType::Void
             }
-            Token::VarDef { .. } => {
-                //let value = tokens_map.get_token(*block_value).unwrap();
-                //let res = compute_expr(value,tokens_map, context);
+            Token::VarDef {
+                var_name,
+                block_value,
+            } => {
+                let value = tokens_map.get_token(*block_value).unwrap();
+                let res = compute_expr(value, tokens_map, context);
+
+                context.define_variable(var_name, None, res);
 
                 VMType::Void
             }
@@ -411,6 +489,7 @@ pub mod vm {
             }
             Token::StringVal { value } => VMType::String(value.to_string()),
             Token::BytesVal { value } => VMType::Bytes(value),
+            Token::VarRef { var_name } => context.get_variable(var_name, None),
         }
     }
 }
