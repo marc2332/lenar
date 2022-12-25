@@ -5,8 +5,9 @@ fn main() {
     use vm::*;
 
     let code = r#"
-        let test = "Hello World!";
-        println(test);
+        let msg = "Hello World!";
+        println(msg);
+        println(Lenar.version);
     "#;
 
     let tokenizer = Tokenizer::new(&code);

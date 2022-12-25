@@ -34,6 +34,9 @@ pub mod tokenizer {
         VarRef {
             var_name: String,
         },
+        PropertyRef {
+            path: Vec<String>,
+        },
     }
 
     impl Token {
@@ -256,6 +259,25 @@ pub mod tokenizer {
                         last_action = PerfomedAction::CalledFunction;
 
                         continue;
+                    } else if count_unexpected_between(i, '.', code) == 0 {
+                        let attrs_path = slice_until_delimeter(&mut chars);
+                        let attrs_path = format!("{}{}", val, attrs_path);
+                        let attrs_path = attrs_path.split('.').collect::<Vec<&str>>();
+
+                        let var_ref = Token::PropertyRef {
+                            path: attrs_path
+                                .iter()
+                                .map(|v| v.to_string())
+                                .collect::<Vec<String>>(),
+                        };
+                        let var_ref_key = tokens_map.insert(var_ref);
+
+                        let current_block = tokens_map.get_mut(current_block).unwrap();
+                        current_block.add_token(var_ref_key);
+
+                        last_action = PerfomedAction::ReferencedVariable;
+
+                        continue;
                     } else {
                         let item_name = slice_until_delimeter(&mut chars);
                         let item_name = format!("{}{}", val, item_name);
@@ -295,9 +317,12 @@ pub mod tokenizer {
 }
 
 pub mod vm {
+    pub use core::slice::Iter;
+    use std::fmt::Debug;
     use std::{
         collections::HashMap,
         io::{stdout, Write},
+        rc::Rc,
     };
 
     use crate::tokenizer::{Token, Tokenizer};
@@ -336,12 +361,25 @@ pub mod vm {
         String(String),
         Bytes(&'a [u8]),
         Void,
+        Instance(Rc<dyn VMInstance<'a>>),
+    }
+
+    pub trait VMInstance<'a>: Debug {
+        fn get_props(&self, path: &mut Iter<String>) -> VMType<'a> {
+            let prop = path.next();
+            if let Some(prop) = prop {
+                self.get_prop(prop)
+            } else {
+                VMType::Void
+            }
+        }
+        fn get_prop(&self, prop: &str) -> VMType<'a>;
     }
 
     pub trait VMFunction {
-        fn call(&mut self, _args: &[VMType]) {
-            panic!("This is not a function.")
-        }
+        fn call(&mut self, _args: &[VMType]);
+
+        // TODO could be interesting to add some metadata methods, such as name.
     }
 
     /// A thread context
@@ -361,7 +399,20 @@ pub mod vm {
             self.variables.insert(0, HashMap::default());
             self.functions.insert(0, HashMap::default());
 
-            let global_scope = self.functions.get_mut(&0).unwrap();
+            let global_fns_scope = self.functions.get_mut(&0).unwrap();
+            let global_var_scope = self.variables.get_mut(&0).unwrap();
+
+            #[derive(Debug)]
+            struct LenarGlobal;
+
+            impl<'a> VMInstance<'a> for LenarGlobal {
+                fn get_prop(&self, prop: &str) -> VMType<'a> {
+                    match prop {
+                        "version" => VMType::Bytes("1.0.0".as_bytes()),
+                        _ => VMType::Void,
+                    }
+                }
+            }
 
             // `print()`
             struct PrintFunc;
@@ -392,8 +443,9 @@ pub mod vm {
                 }
             }
 
-            global_scope.insert("print".to_string(), Box::new(PrintFunc));
-            global_scope.insert("println".to_string(), Box::new(PrintLnFunc));
+            global_fns_scope.insert("print".to_string(), Box::new(PrintFunc));
+            global_fns_scope.insert("println".to_string(), Box::new(PrintLnFunc));
+            global_var_scope.insert("Lenar".to_string(), VMType::Instance(Rc::new(LenarGlobal)));
         }
 
         /// Call a function given a name, a scope ID and arguments
@@ -455,6 +507,29 @@ pub mod vm {
                 panic!("Scope is removed");
             }
         }
+
+        pub fn get_variable_by_path(
+            &mut self,
+            path: &'a [String],
+            scope_id: Option<usize>,
+        ) -> VMType<'a> {
+            let mut path = path.iter();
+            let scope_id = scope_id.unwrap_or(0);
+            let scope = self.variables.get_mut(&scope_id);
+
+            if let Some(scope) = scope {
+                let var_holder = path.next().unwrap();
+
+                if let Some(VMType::Instance(instance)) = scope.get_mut(var_holder) {
+                    let instance = Rc::get_mut(instance).unwrap();
+                    instance.get_props(&mut path)
+                } else {
+                    VMType::Void
+                }
+            } else {
+                panic!("Scope is removed");
+            }
+        }
     }
 
     /// Resolve an expression to a value
@@ -505,6 +580,7 @@ pub mod vm {
             Token::StringVal { value } => VMType::String(value.to_string()),
             Token::BytesVal { value } => VMType::Bytes(value),
             Token::VarRef { var_name } => context.get_variable(var_name, None),
+            Token::PropertyRef { path } => context.get_variable_by_path(path, None),
         }
     }
 }
