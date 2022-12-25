@@ -302,6 +302,7 @@ pub mod vm {
 
     use crate::tokenizer::{Token, Tokenizer};
 
+    /// A interpreter given a Tokenizer
     pub struct VM {
         tokenizer: Tokenizer,
     }
@@ -311,6 +312,7 @@ pub mod vm {
             Self { tokenizer }
         }
 
+        /// Run the VM
         pub fn run(&self) {
             let mut context = Context::default();
 
@@ -325,6 +327,9 @@ pub mod vm {
         }
     }
 
+    /// The primitive types used in the VM
+    /// TODO Would be great if I could avoid using heap-allocated types such as String or Vec and
+    /// instead use the equivalent Rust primitives, just like I do with `VMType::Bytes`
     #[derive(Debug, Clone)]
     pub enum VMType<'a> {
         List(Vec<VMType<'a>>),
@@ -339,6 +344,11 @@ pub mod vm {
         }
     }
 
+    /// A thread context
+    ///
+    /// TODO
+    /// - Implement bottom->top scope finding recursion, e.g, value resolvers as `call_function` or
+    ///   `get_variable` need to find the called function's scope ID from the caller scope ID
     #[derive(Default)]
     pub struct Context<'a> {
         variables: HashMap<usize, HashMap<String, VMType<'a>>>,
@@ -346,13 +356,14 @@ pub mod vm {
     }
 
     impl<'a> Context<'a> {
+        /// Some builtins varibles and values defined in the global scope, such as `println()`
         pub fn setup_globals(&mut self) {
             self.variables.insert(0, HashMap::default());
             self.functions.insert(0, HashMap::default());
 
             let global_scope = self.functions.get_mut(&0).unwrap();
 
-            // PRINT
+            // `print()`
             struct PrintFunc;
 
             impl VMFunction for PrintFunc {
@@ -366,7 +377,7 @@ pub mod vm {
                 }
             }
 
-            // PRINTLN
+            // println()
             struct PrintLnFunc;
 
             impl VMFunction for PrintLnFunc {
@@ -385,6 +396,7 @@ pub mod vm {
             global_scope.insert("println".to_string(), Box::new(PrintLnFunc));
         }
 
+        /// Call a function given a name, a scope ID and arguments
         pub fn call_function(
             &mut self,
             name: impl AsRef<str>,
@@ -409,6 +421,7 @@ pub mod vm {
             VMType::Void
         }
 
+        /// Define a variable with a given name and a value in the specified scope ID
         pub fn define_variable(
             &mut self,
             name: impl AsRef<str>,
@@ -426,6 +439,7 @@ pub mod vm {
             }
         }
 
+        /// Resolve a variable value given it's name and the caller scope ID
         pub fn get_variable(
             &mut self,
             name: impl AsRef<str>,
@@ -443,6 +457,7 @@ pub mod vm {
         }
     }
 
+    /// Resolve an expression to a value
     fn compute_expr<'a>(
         token: &'a Token,
         tokens_map: &'a Tokenizer,
