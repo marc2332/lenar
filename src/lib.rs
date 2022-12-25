@@ -262,14 +262,12 @@ pub mod tokenizer {
                     } else if count_unexpected_between(i, '.', code) == 0 {
                         let attrs_path = slice_until_delimeter(&mut chars);
                         let attrs_path = format!("{}{}", val, attrs_path);
-                        let attrs_path = attrs_path.split('.').collect::<Vec<&str>>();
+                        let path = attrs_path
+                            .split('.')
+                            .map(|v| v.to_string())
+                            .collect::<Vec<String>>();
 
-                        let var_ref = Token::PropertyRef {
-                            path: attrs_path
-                                .iter()
-                                .map(|v| v.to_string())
-                                .collect::<Vec<String>>(),
-                        };
+                        let var_ref = Token::PropertyRef { path };
                         let var_ref_key = tokens_map.insert(var_ref);
 
                         let current_block = tokens_map.get_mut(current_block).unwrap();
