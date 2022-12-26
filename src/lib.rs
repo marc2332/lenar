@@ -346,7 +346,7 @@ pub mod vm {
 
             let tok = global_block.unwrap();
 
-            compute_expr(tok, &self.tokenizer, &mut context);
+            compute_expr(tok, &self.tokenizer, &mut context, &[]);
         }
     }
 
@@ -387,19 +387,14 @@ pub mod vm {
     ///   `get_variable` need to find the called function's scope ID from the caller scope ID
     #[derive(Default)]
     pub struct Context<'a> {
-        variables: HashMap<usize, HashMap<String, VMType<'a>>>,
-        functions: HashMap<usize, HashMap<String, Box<dyn VMFunction>>>, // TODO simplify by making a big giant chunk instead of nested hashmap
+        variables: HashMap<String, VMType<'a>>,
+        functions: HashMap<String, Box<dyn VMFunction>>,
+        scopes: HashMap<usize, Context<'a>>,
     }
 
     impl<'a> Context<'a> {
         /// Some builtins varibles and values defined in the global scope, such as `println()`
         pub fn setup_globals(&mut self) {
-            self.variables.insert(0, HashMap::default());
-            self.functions.insert(0, HashMap::default());
-
-            let global_fns_scope = self.functions.get_mut(&0).unwrap();
-            let global_var_scope = self.variables.get_mut(&0).unwrap();
-
             #[derive(Debug)]
             struct LenarGlobal;
 
@@ -441,31 +436,38 @@ pub mod vm {
                 }
             }
 
-            global_fns_scope.insert("print".to_string(), Box::new(PrintFunc));
-            global_fns_scope.insert("println".to_string(), Box::new(PrintLnFunc));
-            global_var_scope.insert("Lenar".to_string(), VMType::Instance(Rc::new(LenarGlobal)));
+            self.functions
+                .insert("print".to_string(), Box::new(PrintFunc));
+            self.functions
+                .insert("println".to_string(), Box::new(PrintLnFunc));
+            self.variables
+                .insert("Lenar".to_string(), VMType::Instance(Rc::new(LenarGlobal)));
+        }
+
+        pub fn get_scope(&mut self, path: &mut Iter<usize>) -> &mut Context<'a> {
+            let scope = path.next();
+
+            if let Some(scope) = scope {
+                self.scopes.get_mut(scope).unwrap().get_scope(path)
+            } else {
+                self
+            }
         }
 
         /// Call a function given a name, a scope ID and arguments
         pub fn call_function(
             &mut self,
             name: impl AsRef<str>,
-            scope_id: Option<usize>,
+            scope_id: &[usize],
             args: &[VMType],
         ) -> VMType {
-            let scope_id = scope_id.unwrap_or(0);
+            let scope = self.get_scope(&mut scope_id.iter());
 
-            let scope = self.functions.get_mut(&scope_id);
-
-            if let Some(scope) = scope {
-                let func = scope.get_mut(name.as_ref());
-                if let Some(func) = func {
-                    func.call(args)
-                } else {
-                    panic!("Function '{}' is not defined in this scope.", name.as_ref());
-                }
+            let func = scope.functions.get_mut(name.as_ref());
+            if let Some(func) = func {
+                func.call(args)
             } else {
-                panic!("Scope is removed");
+                panic!("Function '{}' is not defined in this scope.", name.as_ref());
             }
 
             VMType::Void
@@ -475,58 +477,48 @@ pub mod vm {
         pub fn define_variable(
             &mut self,
             name: impl AsRef<str>,
-            scope_id: Option<usize>,
+            scope_id: &[usize],
             value: VMType<'a>,
         ) {
-            let scope_id = scope_id.unwrap_or(0);
-
-            let scope = self.variables.get_mut(&scope_id);
-
-            if let Some(scope) = scope {
-                scope.insert(name.as_ref().to_string(), value);
-            } else {
-                panic!("Scope is removed");
-            }
+            let scope = self.get_scope(&mut scope_id.iter());
+            scope.variables.insert(name.as_ref().to_string(), value);
         }
 
         /// Resolve a variable value given it's name and the caller scope ID
-        pub fn get_variable(
-            &mut self,
-            name: impl AsRef<str>,
-            scope_id: Option<usize>,
-        ) -> VMType<'a> {
-            let scope_id = scope_id.unwrap_or(0);
-
-            let scope = self.variables.get_mut(&scope_id);
-
-            if let Some(scope) = scope {
-                scope.get(name.as_ref()).cloned().unwrap_or(VMType::Void)
-            } else {
-                panic!("Scope is removed");
-            }
+        pub fn get_variable(&mut self, name: impl AsRef<str>, scope_id: &[usize]) -> VMType<'a> {
+            let scope = self.get_scope(&mut scope_id.iter());
+            scope
+                .variables
+                .get(name.as_ref())
+                .cloned()
+                .unwrap_or(VMType::Void)
         }
 
         pub fn get_variable_by_path(
             &mut self,
             path: &'a [String],
-            scope_id: Option<usize>,
+            scope_id: &[usize],
         ) -> VMType<'a> {
             let mut path = path.iter();
-            let scope_id = scope_id.unwrap_or(0);
-            let scope = self.variables.get_mut(&scope_id);
+            let scope = self.get_scope(&mut scope_id.iter());
 
-            if let Some(scope) = scope {
-                let var_holder = path.next().unwrap();
+            let var_holder = path.next().unwrap();
 
-                if let Some(VMType::Instance(instance)) = scope.get_mut(var_holder) {
-                    let instance = Rc::get_mut(instance).unwrap();
-                    instance.get_props(&mut path)
-                } else {
-                    VMType::Void
-                }
+            if let Some(VMType::Instance(instance)) = scope.variables.get_mut(var_holder) {
+                let instance = Rc::get_mut(instance).unwrap();
+                instance.get_props(&mut path)
             } else {
-                panic!("Scope is removed");
+                VMType::Void
             }
+        }
+
+        /// Define a variable with a given name and a value in the specified scope ID
+        pub fn create_scope(&mut self, scope_path: &[usize], scope_id: usize) {
+            let scope = self.get_scope(&mut scope_path.iter());
+            let mut new_scope = Context::default();
+
+            new_scope.setup_globals();
+            scope.scopes.insert(scope_id, new_scope);
         }
     }
 
@@ -535,13 +527,24 @@ pub mod vm {
         token: &'a Token,
         tokens_map: &'a Tokenizer,
         context: &mut Context<'a>,
+        scope_path: &[usize],
     ) -> VMType<'a> {
         match token {
             Token::Block { tokens } => {
+                let mut next_scope_id = scope_path.last().copied().unwrap_or(0);
+
                 for (i, tok) in tokens.iter().enumerate() {
                     let is_last = i == tokens.len() - 1;
                     let tok = tokens_map.get_token(*tok).unwrap();
-                    let res = compute_expr(tok, tokens_map, context);
+                    let res = if matches!(tok, Token::Block { .. }) {
+                        next_scope_id += 1;
+                        context.create_scope(scope_path, next_scope_id);
+                        let scope_path = &[scope_path, &[next_scope_id]].concat();
+                        compute_expr(tok, tokens_map, context, scope_path)
+                    } else {
+                        compute_expr(tok, tokens_map, context, scope_path)
+                    };
+
                     if is_last {
                         return res;
                     }
@@ -554,9 +557,9 @@ pub mod vm {
                 block_value,
             } => {
                 let value = tokens_map.get_token(*block_value).unwrap();
-                let res = compute_expr(value, tokens_map, context);
+                let res = compute_expr(value, tokens_map, context, scope_path);
 
-                context.define_variable(var_name, None, res);
+                context.define_variable(var_name, scope_path, res);
 
                 VMType::Void
             }
@@ -566,19 +569,20 @@ pub mod vm {
                 if let Token::Block { tokens } = value {
                     for tok in tokens {
                         let tok = tokens_map.get_token(*tok).unwrap();
-                        let res = compute_expr(tok, tokens_map, context);
+                        let res = compute_expr(tok, tokens_map, context, scope_path);
+
                         args.push(res);
                     }
                 }
 
-                context.call_function(fn_name, None, &args);
+                context.call_function(fn_name, scope_path, &args);
 
                 VMType::Void
             }
             Token::StringVal { value } => VMType::String(value.to_string()),
             Token::BytesVal { value } => VMType::Bytes(value),
-            Token::VarRef { var_name } => context.get_variable(var_name, None),
-            Token::PropertyRef { path } => context.get_variable_by_path(path, None),
+            Token::VarRef { var_name } => context.get_variable(var_name, scope_path),
+            Token::PropertyRef { path } => context.get_variable_by_path(path, scope_path),
         }
     }
 }
