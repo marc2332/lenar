@@ -2,7 +2,7 @@ use lenar::*;
 
 fn main() {
     use tokenizer::*;
-    use vm::*;
+    use runtime::*;
 
     let code = r#"
         let val = "last value";
@@ -16,7 +16,7 @@ fn main() {
 
     let tokenizer = Tokenizer::new(&code);
 
-    let vm = VM::new(tokenizer);
+    let runtime = Runtime::new(tokenizer);
 
-    vm.run();
+    runtime.run();
 }

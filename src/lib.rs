@@ -314,7 +314,7 @@ pub mod tokenizer {
     }
 }
 
-pub mod vm {
+pub mod runtime {
     pub use core::slice::Iter;
     use std::fmt::Debug;
     use std::{
@@ -326,16 +326,16 @@ pub mod vm {
     use crate::tokenizer::{Token, Tokenizer};
 
     /// A interpreter given a Tokenizer
-    pub struct VM {
+    pub struct Runtime {
         tokenizer: Tokenizer,
     }
 
-    impl VM {
+    impl Runtime {
         pub fn new(tokenizer: Tokenizer) -> Self {
             Self { tokenizer }
         }
 
-        /// Run the VM
+        /// Run the Runtime
         pub fn run(&self) {
             let mut context = Context::default();
 
@@ -350,32 +350,32 @@ pub mod vm {
         }
     }
 
-    /// The primitive types used in the VM
+    /// The primitive types used in the Runtime
     /// TODO Would be great if I could avoid using heap-allocated types such as String or Vec and
-    /// instead use the equivalent Rust primitives, just like I do with `VMType::Bytes`
+    /// instead use the equivalent Rust primitives, just like I do with `RuntimeType::Bytes`
     #[derive(Debug, Clone)]
-    pub enum VMType<'a> {
-        List(Vec<VMType<'a>>),
+    pub enum RuntimeType<'a> {
+        List(Vec<RuntimeType<'a>>),
         String(String),
         Bytes(&'a [u8]),
         Void,
-        Instance(Rc<dyn VMInstance<'a>>),
+        Instance(Rc<dyn RuntimeInstance<'a>>),
     }
 
-    pub trait VMInstance<'a>: Debug {
-        fn get_props(&self, path: &mut Iter<String>) -> VMType<'a> {
+    pub trait RuntimeInstance<'a>: Debug {
+        fn get_props(&self, path: &mut Iter<String>) -> RuntimeType<'a> {
             let prop = path.next();
             if let Some(prop) = prop {
                 self.get_prop(prop)
             } else {
-                VMType::Void
+                RuntimeType::Void
             }
         }
-        fn get_prop(&self, prop: &str) -> VMType<'a>;
+        fn get_prop(&self, prop: &str) -> RuntimeType<'a>;
     }
 
-    pub trait VMFunction {
-        fn call(&mut self, _args: &[VMType]);
+    pub trait RuntimeFunction {
+        fn call(&mut self, _args: &[RuntimeType]);
 
         // TODO could be interesting to add some metadata methods, such as name.
     }
@@ -387,8 +387,8 @@ pub mod vm {
     ///   `get_variable` need to find the called function's scope ID from the caller scope ID
     #[derive(Default)]
     pub struct Context<'a> {
-        variables: HashMap<String, VMType<'a>>,
-        functions: HashMap<String, Box<dyn VMFunction>>,
+        variables: HashMap<String, RuntimeType<'a>>,
+        functions: HashMap<String, Box<dyn RuntimeFunction>>,
         scopes: HashMap<usize, Context<'a>>,
     }
 
@@ -398,11 +398,11 @@ pub mod vm {
             #[derive(Debug)]
             struct LenarGlobal;
 
-            impl<'a> VMInstance<'a> for LenarGlobal {
-                fn get_prop(&self, prop: &str) -> VMType<'a> {
+            impl<'a> RuntimeInstance<'a> for LenarGlobal {
+                fn get_prop(&self, prop: &str) -> RuntimeType<'a> {
                     match prop {
-                        "version" => VMType::Bytes("1.0.0".as_bytes()),
-                        _ => VMType::Void,
+                        "version" => RuntimeType::Bytes("1.0.0".as_bytes()),
+                        _ => RuntimeType::Void,
                     }
                 }
             }
@@ -410,10 +410,10 @@ pub mod vm {
             // `print()`
             struct PrintFunc;
 
-            impl VMFunction for PrintFunc {
-                fn call(&mut self, args: &[VMType]) {
+            impl RuntimeFunction for PrintFunc {
+                fn call(&mut self, args: &[RuntimeType]) {
                     for val in args {
-                        if let VMType::Bytes(bts) = val {
+                        if let RuntimeType::Bytes(bts) = val {
                             stdout().write(bts).ok();
                         }
                     }
@@ -424,10 +424,10 @@ pub mod vm {
             // println()
             struct PrintLnFunc;
 
-            impl VMFunction for PrintLnFunc {
-                fn call(&mut self, args: &[VMType]) {
+            impl RuntimeFunction for PrintLnFunc {
+                fn call(&mut self, args: &[RuntimeType]) {
                     for val in args {
-                        if let VMType::Bytes(bts) = val {
+                        if let RuntimeType::Bytes(bts) = val {
                             stdout().write(bts).ok();
                         }
                     }
@@ -441,7 +441,7 @@ pub mod vm {
             self.functions
                 .insert("println".to_string(), Box::new(PrintLnFunc));
             self.variables
-                .insert("Lenar".to_string(), VMType::Instance(Rc::new(LenarGlobal)));
+                .insert("Lenar".to_string(), RuntimeType::Instance(Rc::new(LenarGlobal)));
         }
 
         pub fn get_scope(&mut self, path: &mut Iter<usize>) -> &mut Context<'a> {
@@ -459,8 +459,8 @@ pub mod vm {
             &mut self,
             name: impl AsRef<str>,
             scope_id: &[usize],
-            args: &[VMType],
-        ) -> VMType {
+            args: &[RuntimeType],
+        ) -> RuntimeType {
             let scope = self.get_scope(&mut scope_id.iter());
 
             let func = scope.functions.get_mut(name.as_ref());
@@ -470,7 +470,7 @@ pub mod vm {
                 panic!("Function '{}' is not defined in this scope.", name.as_ref());
             }
 
-            VMType::Void
+            RuntimeType::Void
         }
 
         /// Define a variable with a given name and a value in the specified scope ID
@@ -478,37 +478,37 @@ pub mod vm {
             &mut self,
             name: impl AsRef<str>,
             scope_id: &[usize],
-            value: VMType<'a>,
+            value: RuntimeType<'a>,
         ) {
             let scope = self.get_scope(&mut scope_id.iter());
             scope.variables.insert(name.as_ref().to_string(), value);
         }
 
         /// Resolve a variable value given it's name and the caller scope ID
-        pub fn get_variable(&mut self, name: impl AsRef<str>, scope_id: &[usize]) -> VMType<'a> {
+        pub fn get_variable(&mut self, name: impl AsRef<str>, scope_id: &[usize]) -> RuntimeType<'a> {
             let scope = self.get_scope(&mut scope_id.iter());
             scope
                 .variables
                 .get(name.as_ref())
                 .cloned()
-                .unwrap_or(VMType::Void)
+                .unwrap_or(RuntimeType::Void)
         }
 
         pub fn get_variable_by_path(
             &mut self,
             path: &'a [String],
             scope_id: &[usize],
-        ) -> VMType<'a> {
+        ) -> RuntimeType<'a> {
             let mut path = path.iter();
             let scope = self.get_scope(&mut scope_id.iter());
 
             let var_holder = path.next().unwrap();
 
-            if let Some(VMType::Instance(instance)) = scope.variables.get_mut(var_holder) {
+            if let Some(RuntimeType::Instance(instance)) = scope.variables.get_mut(var_holder) {
                 let instance = Rc::get_mut(instance).unwrap();
                 instance.get_props(&mut path)
             } else {
-                VMType::Void
+                RuntimeType::Void
             }
         }
 
@@ -528,7 +528,7 @@ pub mod vm {
         tokens_map: &'a Tokenizer,
         context: &mut Context<'a>,
         scope_path: &[usize],
-    ) -> VMType<'a> {
+    ) -> RuntimeType<'a> {
         match token {
             Token::Block { tokens } => {
                 let mut next_scope_id = scope_path.last().copied().unwrap_or(0);
@@ -550,7 +550,7 @@ pub mod vm {
                     }
                 }
 
-                VMType::Void
+                RuntimeType::Void
             }
             Token::VarDef {
                 var_name,
@@ -561,7 +561,7 @@ pub mod vm {
 
                 context.define_variable(var_name, scope_path, res);
 
-                VMType::Void
+                RuntimeType::Void
             }
             Token::FunctionCall { arguments, fn_name } => {
                 let value = tokens_map.get_token(*arguments).unwrap();
@@ -577,10 +577,10 @@ pub mod vm {
 
                 context.call_function(fn_name, scope_path, &args);
 
-                VMType::Void
+                RuntimeType::Void
             }
-            Token::StringVal { value } => VMType::String(value.to_string()),
-            Token::BytesVal { value } => VMType::Bytes(value),
+            Token::StringVal { value } => RuntimeType::String(value.to_string()),
+            Token::BytesVal { value } => RuntimeType::Bytes(value),
             Token::VarRef { var_name } => context.get_variable(var_name, scope_path),
             Token::PropertyRef { path } => context.get_variable_by_path(path, scope_path),
         }
