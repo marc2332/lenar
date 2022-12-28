@@ -1,4 +1,6 @@
-# lenar - an incredibly fast programming language
+# lenar - 🌑 interpreted programming language
 
-- v8-like snaphots
-- runtime
+```rust
+let value = "test";
+println(value);
+```
