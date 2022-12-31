@@ -4,7 +4,7 @@ fn main() {
     use tokenizer::*;
 
     let code = r#"
-        let test = hola("1" "wooow");
+    let test = hola("1" "wooow");
         {
             let test2 = yo("2" "hola");
             alright("
@@ -58,6 +58,9 @@ fn main() {
                                                                 .unwrap(),
                                                         )
                                                     }
+                                                    if let Token::VarRef { var_name } = val {
+                                                        var_vals.push(var_name.to_string())
+                                                    }
                                                 }
                                             }
                                             println!("DEF: Variable <{}> with value of calling {:?} with arguments {:?}", var_name, fn_name, var_vals);
@@ -77,6 +80,9 @@ fn main() {
                                 if let Some(val) = val {
                                     if let Token::BytesVal { value } = val {
                                         var_vals.push(String::from_utf8(value.to_vec()).unwrap())
+                                    }
+                                    if let Token::VarRef { var_name } = val {
+                                        var_vals.push(var_name.clone())
                                     }
                                 }
                             }

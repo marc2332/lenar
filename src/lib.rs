@@ -1,5 +1,5 @@
 pub mod tokenizer {
-    use std::str::Chars;
+    use std::{iter::Peekable, str::Chars};
 
     pub use slab::Slab;
 
@@ -58,21 +58,18 @@ pub mod tokenizer {
     }
 
     #[inline(always)]
-    fn slice_until(until: char, code: &mut Chars) -> String {
-        code.take_while(|&v| v != until).collect::<String>()
+    fn slice_until(until: char, chars: &mut Peekable<Chars>) -> String {
+        chars.take_while(|&v| v != until).collect::<String>()
     }
 
     #[inline(always)]
-    fn slice_until_delimeter(code: &mut Chars) -> String {
-        let until = [',', ';', ')'];
-        code.take_while(|&v| !until.contains(&v))
-            .collect::<String>()
-    }
-
-    #[inline(always)]
-    fn find_pos_until_is_not_char(start: usize, until: char, code: &str) -> usize {
-        let code = &code[start..];
-        code.chars().take_while(|&v| v == until).count()
+    fn slice_until_delimeter(chars: &mut Peekable<Chars>) -> String {
+        let until = [',', ';', ')', '}'];
+        let mut s = String::new();
+        while let Some(c) = chars.next_if(|v| !until.contains(v)) {
+            s.push_str(&c.to_string());
+        }
+        s
     }
 
     #[inline(always)]
@@ -80,7 +77,7 @@ pub mod tokenizer {
         let code = &code[start..];
         code.chars()
             .take_while(|&v| v != until)
-            .filter(|v| v.is_whitespace())
+            .filter(|v| v.is_whitespace() || v == &';' || v == &')')
             .count()
     }
 
@@ -97,6 +94,13 @@ pub mod tokenizer {
         ReferencedVariable,
     }
 
+    #[derive(Clone, Copy, PartialEq)]
+    enum BlockType {
+        Generic,
+        FuncCall,
+        Value,
+    }
+
     impl Tokenizer {
         pub fn new(code: &str) -> Self {
             let mut tokens_map = Slab::new();
@@ -104,14 +108,14 @@ pub mod tokenizer {
             let global_block_token = Token::Block { tokens: Vec::new() };
             let global_block = tokens_map.insert(global_block_token);
 
-            let mut block_indexes = vec![global_block];
+            let mut block_indexes = vec![(global_block, BlockType::Generic)];
             let mut string_count = 0;
             let mut last_action = PerfomedAction::EnteredGlobalScope;
 
             let len = code.len();
-            let mut chars = code.chars();
+            let mut chars = code.chars().peekable();
 
-            fn advance_by(how_much: usize, chars: &mut Chars) {
+            fn advance_by(how_much: usize, chars: &mut Peekable<Chars>) {
                 for _ in 0..how_much {
                     chars.next();
                 }
@@ -128,17 +132,17 @@ pub mod tokenizer {
 
                 // Skip spaces and line breaks
                 if string_count == 0 && (val == Some(' ') || val == Some('\n')) {
-                    advance_by(find_pos_until_is_not_char(i + 1, ' ', code), &mut chars);
                     continue;
                 }
 
                 let val = val.unwrap();
 
-                let current_block = *block_indexes.last().unwrap();
+                let (current_block, current_block_type) = *block_indexes.last().unwrap();
 
                 // TODO closing parenthesis should only close the last `arguments` block not an actual code block
                 if val == ')' && string_count == 0 {
                     block_indexes.pop();
+                    last_action = PerfomedAction::ClosedStatement;
                     continue;
                 }
 
@@ -153,11 +157,12 @@ pub mod tokenizer {
                 }
 
                 // End a statement
-                if val == ';' {
-                    if string_count == 0 {
+                if val == ';' && string_count == 0 {
+                    if BlockType::Value == current_block_type {
                         block_indexes.pop();
-                        last_action = PerfomedAction::ClosedStatement;
                     }
+
+                    last_action = PerfomedAction::ClosedStatement;
                     continue;
                 }
 
@@ -192,7 +197,7 @@ pub mod tokenizer {
                     let block = Token::Block { tokens: Vec::new() };
                     let block_key = tokens_map.insert(block);
 
-                    block_indexes.push(block_key);
+                    block_indexes.push((block_key, BlockType::Generic));
                     let current_block = tokens_map.get_mut(current_block).unwrap();
                     current_block.add_token(block_key);
 
@@ -224,7 +229,7 @@ pub mod tokenizer {
                     let current_block = tokens_map.get_mut(current_block).unwrap();
                     current_block.add_token(var_key);
 
-                    block_indexes.push(block_key);
+                    block_indexes.push((block_key, BlockType::Value));
 
                     last_action = PerfomedAction::DefinedVariable;
 
@@ -254,7 +259,7 @@ pub mod tokenizer {
                         let current_block = tokens_map.get_mut(current_block).unwrap();
                         current_block.add_token(fn_key);
 
-                        block_indexes.push(block_key);
+                        block_indexes.push((block_key, BlockType::FuncCall));
 
                         last_action = PerfomedAction::CalledFunction;
 
@@ -316,12 +321,18 @@ pub mod tokenizer {
 
 pub mod runtime {
     pub use core::slice::Iter;
+    use std::cell::RefCell;
     use std::fmt::Debug;
+    use std::fs::File;
+    use std::io::Read;
+    use std::str::from_utf8;
     use std::{
         collections::HashMap,
         io::{stdout, Write},
         rc::Rc,
     };
+
+    use slab::Slab;
 
     use crate::tokenizer::{Token, Tokenizer};
 
@@ -355,11 +366,55 @@ pub mod runtime {
     /// instead use the equivalent Rust primitives, just like I do with `RuntimeType::Bytes`
     #[derive(Debug, Clone)]
     pub enum RuntimeType<'a> {
+        Usize(usize),
         List(Vec<RuntimeType<'a>>),
         String(String),
         Bytes(&'a [u8]),
+        OwnedBytes(Vec<u8>),
         Void,
         Instance(Rc<dyn RuntimeInstance<'a>>),
+    }
+
+    impl<'a> RuntimeType<'a> {
+        pub fn as_list(&self) -> Option<&Vec<RuntimeType<'a>>> {
+            if let Self::List(v) = self {
+                Some(v)
+            } else {
+                None
+            }
+        }
+
+        pub fn as_string(&self) -> Option<&String> {
+            if let Self::String(v) = self {
+                Some(v)
+            } else {
+                None
+            }
+        }
+
+        pub fn as_bytes(&self) -> Option<&[u8]> {
+            match self {
+                Self::OwnedBytes(v) => Some(v),
+                Self::Bytes(v) => Some(v),
+                _ => None,
+            }
+        }
+
+        pub fn as_void(&self) -> Option<()> {
+            if let Self::Void = self {
+                Some(())
+            } else {
+                None
+            }
+        }
+
+        pub fn as_instance(&self) -> Option<&Rc<dyn RuntimeInstance<'a>>> {
+            if let Self::Instance(v) = self {
+                Some(v)
+            } else {
+                None
+            }
+        }
     }
 
     pub trait RuntimeInstance<'a>: Debug {
@@ -375,7 +430,7 @@ pub mod runtime {
     }
 
     pub trait RuntimeFunction {
-        fn call(&mut self, _args: &[RuntimeType]);
+        fn call<'s>(&mut self, _args: &[RuntimeType<'s>]) -> RuntimeType<'s>;
 
         // TODO could be interesting to add some metadata methods, such as name.
     }
@@ -395,6 +450,58 @@ pub mod runtime {
     impl<'a> Context<'a> {
         /// Some builtins varibles and values defined in the global scope, such as `println()`
         pub fn setup_globals(&mut self) {
+            let resources_files = Rc::new(RefCell::new(Slab::<File>::new()));
+
+            #[derive(Debug)]
+            struct ToStringFunc {
+                resources_files: Rc<RefCell<Slab<File>>>,
+            }
+
+            impl ToStringFunc {
+                pub fn new(resources_files: Rc<RefCell<Slab<File>>>) -> Self {
+                    Self { resources_files }
+                }
+            }
+
+            impl RuntimeFunction for ToStringFunc {
+                fn call<'s>(&mut self, args: &[RuntimeType<'s>]) -> RuntimeType<'s> {
+                    match args[0] {
+                        RuntimeType::Usize(rid) => {
+                            let resources_files = self.resources_files.borrow_mut();
+                            let mut file = resources_files.get(rid).unwrap();
+                            let mut buf = Vec::new();
+                            file.read_to_end(&mut buf).unwrap();
+                            RuntimeType::OwnedBytes(buf)
+                        }
+                        _ => RuntimeType::Bytes("test".as_bytes()),
+                    }
+                }
+            }
+
+            #[derive(Debug)]
+            struct OpenFileFunc {
+                resources_files: Rc<RefCell<Slab<File>>>,
+            }
+
+            impl OpenFileFunc {
+                pub fn new(resources_files: Rc<RefCell<Slab<File>>>) -> Self {
+                    Self { resources_files }
+                }
+            }
+
+            impl RuntimeFunction for OpenFileFunc {
+                fn call<'s>(&mut self, args: &[RuntimeType<'s>]) -> RuntimeType<'s> {
+                    let file_path = args[0].as_bytes().unwrap();
+                    let file_path = from_utf8(file_path).unwrap();
+                    let file = File::open(file_path).unwrap();
+
+                    let mut resources_files = self.resources_files.borrow_mut();
+                    let rid = resources_files.insert(file);
+
+                    RuntimeType::Usize(rid)
+                }
+            }
+
             #[derive(Debug)]
             struct LenarGlobal;
 
@@ -411,13 +518,14 @@ pub mod runtime {
             struct PrintFunc;
 
             impl RuntimeFunction for PrintFunc {
-                fn call(&mut self, args: &[RuntimeType]) {
+                fn call<'s>(&mut self, args: &[RuntimeType<'s>]) -> RuntimeType<'s> {
                     for val in args {
-                        if let RuntimeType::Bytes(bts) = val {
+                        if let Some(bts) = val.as_bytes() {
                             stdout().write(bts).ok();
                         }
                     }
                     stdout().flush().ok();
+                    RuntimeType::Void
                 }
             }
 
@@ -425,23 +533,34 @@ pub mod runtime {
             struct PrintLnFunc;
 
             impl RuntimeFunction for PrintLnFunc {
-                fn call(&mut self, args: &[RuntimeType]) {
+                fn call<'s>(&mut self, args: &[RuntimeType<'s>]) -> RuntimeType<'s> {
                     for val in args {
-                        if let RuntimeType::Bytes(bts) = val {
+                        if let Some(bts) = val.as_bytes() {
                             stdout().write(bts).ok();
                         }
                     }
                     stdout().write("\n".as_bytes()).ok();
                     stdout().flush().ok();
+                    RuntimeType::Void
                 }
             }
 
+            self.functions.insert(
+                "toString".to_string(),
+                Box::new(ToStringFunc::new(resources_files.clone())),
+            );
+            self.functions.insert(
+                "openFile".to_string(),
+                Box::new(OpenFileFunc::new(resources_files)),
+            );
             self.functions
                 .insert("print".to_string(), Box::new(PrintFunc));
             self.functions
                 .insert("println".to_string(), Box::new(PrintLnFunc));
-            self.variables
-                .insert("Lenar".to_string(), RuntimeType::Instance(Rc::new(LenarGlobal)));
+            self.variables.insert(
+                "Lenar".to_string(),
+                RuntimeType::Instance(Rc::new(LenarGlobal)),
+            );
         }
 
         pub fn get_scope(&mut self, path: &mut Iter<usize>) -> &mut Context<'a> {
@@ -459,8 +578,8 @@ pub mod runtime {
             &mut self,
             name: impl AsRef<str>,
             scope_id: &[usize],
-            args: &[RuntimeType],
-        ) -> RuntimeType {
+            args: &[RuntimeType<'a>],
+        ) -> RuntimeType<'a> {
             let scope = self.get_scope(&mut scope_id.iter());
 
             let func = scope.functions.get_mut(name.as_ref());
@@ -469,8 +588,6 @@ pub mod runtime {
             } else {
                 panic!("Function '{}' is not defined in this scope.", name.as_ref());
             }
-
-            RuntimeType::Void
         }
 
         /// Define a variable with a given name and a value in the specified scope ID
@@ -485,7 +602,11 @@ pub mod runtime {
         }
 
         /// Resolve a variable value given it's name and the caller scope ID
-        pub fn get_variable(&mut self, name: impl AsRef<str>, scope_id: &[usize]) -> RuntimeType<'a> {
+        pub fn get_variable(
+            &mut self,
+            name: impl AsRef<str>,
+            scope_id: &[usize],
+        ) -> RuntimeType<'a> {
             let scope = self.get_scope(&mut scope_id.iter());
             scope
                 .variables
@@ -558,7 +679,6 @@ pub mod runtime {
             } => {
                 let value = tokens_map.get_token(*block_value).unwrap();
                 let res = compute_expr(value, tokens_map, context, scope_path);
-
                 context.define_variable(var_name, scope_path, res);
 
                 RuntimeType::Void
@@ -575,9 +695,7 @@ pub mod runtime {
                     }
                 }
 
-                context.call_function(fn_name, scope_path, &args);
-
-                RuntimeType::Void
+                context.call_function(fn_name, scope_path, &args)
             }
             Token::StringVal { value } => RuntimeType::String(value.to_string()),
             Token::BytesVal { value } => RuntimeType::Bytes(value),

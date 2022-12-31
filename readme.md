@@ -4,3 +4,7 @@
 let value = "test";
 println(value);
 ```
+
+
+- incredibly fast handcrafted parser
+- as little dependencies as possible

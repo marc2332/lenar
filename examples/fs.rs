@@ -5,13 +5,9 @@ fn main() {
     use tokenizer::*;
 
     let code = r#"
-        let val = "last value";
-        {
-            let val = "first value!";
-            println(val);
-        }
-        println(val);
-        println(Lenar.version);
+        let file = openFile("examples/fs.rs");
+        let v = toString(file);
+        println(v);
     "#;
 
     let tokenizer = Tokenizer::new(&code);
