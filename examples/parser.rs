@@ -4,9 +4,9 @@ fn main() {
     use tokenizer::*;
 
     let code = r#"
-    let test = hola("1" "wooow");
+        let test = hello("1" "wooow");
         {
-            let test2 = yo("2" "hola");
+            let test2 = yo("2" "hello!");
             alright("
                 ok
             ")

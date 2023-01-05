@@ -10,7 +10,7 @@ fn main() {
     let code = r#"
         let test = { { "test" } };
         {
-            let ok = woooow("ok");
+            woooow("ok");
         }
     "#
     .repeat(10000000);

@@ -633,13 +633,19 @@ pub mod runtime {
             }
         }
 
-        /// Define a variable with a given name and a value in the specified scope ID
+        /// Create a new scope given an ID in the specified scope by a path
         pub fn create_scope(&mut self, scope_path: &[usize], scope_id: usize) {
             let scope = self.get_scope(&mut scope_path.iter());
             let mut new_scope = Context::default();
 
             new_scope.setup_globals();
             scope.scopes.insert(scope_id, new_scope);
+        }
+
+        /// Drop a scope given an ID and a scope path
+        pub fn drop_scope(&mut self, scope_path: &[usize], scope_id: usize) {
+            let scope = self.get_scope(&mut scope_path.iter());
+            scope.scopes.remove(&scope_id);
         }
     }
 
@@ -661,7 +667,9 @@ pub mod runtime {
                         next_scope_id += 1;
                         context.create_scope(scope_path, next_scope_id);
                         let scope_path = &[scope_path, &[next_scope_id]].concat();
-                        compute_expr(tok, tokens_map, context, scope_path)
+                        let return_val = compute_expr(tok, tokens_map, context, scope_path);
+                        context.drop_scope(scope_path, next_scope_id);
+                        return_val
                     } else {
                         compute_expr(tok, tokens_map, context, scope_path)
                     };
