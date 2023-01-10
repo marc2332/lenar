@@ -1,10 +1,14 @@
-# lenar - 🌑 interpreted programming language
+# 🌑 lenar -  interpreted programming language
 
 ```rust
 let value = "test";
 println(value);
+{
+    println("hi");
+}
 ```
 
+- Incredibly fast handcrafted parser
+- Minimal dependencies
 
-- incredibly fast handcrafted parser
-- as little dependencies as possible
+[MIT License](./LICENSE.md)
