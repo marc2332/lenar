@@ -4,13 +4,9 @@ fn main() {
     use tokenizer::*;
 
     let code = r#"
-        let test = hello("1" "wooow");
-        {
-            let test2 = yo("2" "hello!");
-            alright("
-                ok
-            ")
-        }
+    let func = fn(x){ "test" };
+
+    let a = "test";
     "#;
 
     let tokens_map = Tokenizer::new(&code);
@@ -45,6 +41,9 @@ fn main() {
                                             var_name, value
                                         );
                                     }
+                                    Token::FnDef { .. } => {
+                                        println!("DEF: Variable <{}> is a function", var_name);
+                                    }
                                     Token::FunctionCall { fn_name, arguments } => {
                                         let value = tokens_map.get_token(*arguments).unwrap();
                                         if let Token::Block { tokens } = value {
@@ -66,7 +65,9 @@ fn main() {
                                             println!("DEF: Variable <{}> with value of calling {:?} with arguments {:?}", var_name, fn_name, var_vals);
                                         }
                                     }
-                                    _ => {}
+                                    v => {
+                                        println!("{v:?}");
+                                    }
                                 }
                             }
                         }

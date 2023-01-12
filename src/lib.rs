@@ -21,6 +21,10 @@ pub mod tokenizer {
             block_value: TokenKey,
             var_name: String,
         },
+        FnDef {
+            arguments_block: TokenKey,
+            block_value: TokenKey,
+        },
         StringVal {
             value: String,
         },
@@ -99,6 +103,7 @@ pub mod tokenizer {
         Generic,
         FuncCall,
         Value,
+        FuncValue,
     }
 
     impl Tokenizer {
@@ -147,7 +152,7 @@ pub mod tokenizer {
                 }
 
                 // Check operator syntax
-                if val == '=' {
+                if val == '=' && string_count == 0 {
                     if matches!(last_action, PerfomedAction::DefinedVariable) {
                         last_action = PerfomedAction::FoundOperator('=');
                     } else {
@@ -209,6 +214,9 @@ pub mod tokenizer {
                 // Closing a block
                 if val == '}' && string_count == 0 {
                     block_indexes.pop();
+                    if let Some((_, BlockType::FuncValue)) = block_indexes.last() {
+                        block_indexes.pop();
+                    }
                     last_action = PerfomedAction::ClosedBlock;
                     continue;
                 }
@@ -242,26 +250,48 @@ pub mod tokenizer {
                 }
 
                 if string_count == 0 {
-                    // is a function call
+                    // Functions
                     if count_unexpected_between(i, '(', code) == 0 {
                         let item_name = slice_until('(', &mut chars);
                         let item_name = format!("{}{}", val, item_name);
 
-                        let value_block = Token::Block { tokens: Vec::new() };
-                        let block_key = tokens_map.insert(value_block);
+                        if item_name == "fn" {
+                            let args_block = Token::Block { tokens: Vec::new() };
+                            let args_block_key = tokens_map.insert(args_block);
 
-                        let fn_def = Token::FunctionCall {
-                            fn_name: item_name,
-                            arguments: block_key,
-                        };
-                        let fn_key = tokens_map.insert(fn_def);
+                            let value_block = Token::Block { tokens: Vec::new() };
+                            let block_key = tokens_map.insert(value_block);
 
-                        let current_block = tokens_map.get_mut(current_block).unwrap();
-                        current_block.add_token(fn_key);
+                            let var_def = Token::FnDef {
+                                block_value: block_key,
+                                arguments_block: args_block_key,
+                            };
+                            let var_key = tokens_map.insert(var_def);
 
-                        block_indexes.push((block_key, BlockType::FuncCall));
+                            let current_block = tokens_map.get_mut(current_block).unwrap();
+                            current_block.add_token(var_key);
 
-                        last_action = PerfomedAction::CalledFunction;
+                            block_indexes.push((block_key, BlockType::FuncValue));
+                            block_indexes.push((args_block_key, BlockType::FuncCall));
+
+                            last_action = PerfomedAction::CalledFunction;
+                        } else {
+                            let value_block = Token::Block { tokens: Vec::new() };
+                            let block_key = tokens_map.insert(value_block);
+
+                            let fn_def = Token::FunctionCall {
+                                fn_name: item_name,
+                                arguments: block_key,
+                            };
+                            let fn_key = tokens_map.insert(fn_def);
+
+                            let current_block = tokens_map.get_mut(current_block).unwrap();
+                            current_block.add_token(fn_key);
+
+                            block_indexes.push((block_key, BlockType::FuncCall));
+
+                            last_action = PerfomedAction::CalledFunction;
+                        }
 
                         continue;
                     } else if count_unexpected_between(i, '.', code) == 0 {
@@ -373,6 +403,7 @@ pub mod runtime {
         OwnedBytes(Vec<u8>),
         Void,
         Instance(Rc<dyn RuntimeInstance<'a>>),
+        Function(Rc<dyn RuntimeFunction>),
     }
 
     impl<'a> RuntimeType<'a> {
@@ -429,8 +460,12 @@ pub mod runtime {
         fn get_prop(&self, prop: &str) -> RuntimeType<'a>;
     }
 
-    pub trait RuntimeFunction {
-        fn call<'s>(&mut self, _args: &[RuntimeType<'s>]) -> RuntimeType<'s>;
+    pub trait RuntimeFunction: Debug {
+        fn call<'s>(
+            &mut self,
+            _args: Vec<RuntimeType<'s>>,
+            tokens_map: &'s Tokenizer,
+        ) -> RuntimeType<'s>;
 
         // TODO could be interesting to add some metadata methods, such as name.
     }
@@ -443,7 +478,6 @@ pub mod runtime {
     #[derive(Default)]
     pub struct Context<'a> {
         variables: HashMap<String, RuntimeType<'a>>,
-        functions: HashMap<String, Box<dyn RuntimeFunction>>,
         scopes: HashMap<usize, Context<'a>>,
     }
 
@@ -464,7 +498,11 @@ pub mod runtime {
             }
 
             impl RuntimeFunction for ToStringFunc {
-                fn call<'s>(&mut self, args: &[RuntimeType<'s>]) -> RuntimeType<'s> {
+                fn call<'s>(
+                    &mut self,
+                    args: Vec<RuntimeType<'s>>,
+                    _tokens_map: &'s Tokenizer,
+                ) -> RuntimeType<'s> {
                     match args[0] {
                         RuntimeType::Usize(rid) => {
                             let resources_files = self.resources_files.borrow_mut();
@@ -490,7 +528,11 @@ pub mod runtime {
             }
 
             impl RuntimeFunction for OpenFileFunc {
-                fn call<'s>(&mut self, args: &[RuntimeType<'s>]) -> RuntimeType<'s> {
+                fn call<'s>(
+                    &mut self,
+                    args: Vec<RuntimeType<'s>>,
+                    _tokens_map: &'s Tokenizer,
+                ) -> RuntimeType<'s> {
                     let file_path = args[0].as_bytes().unwrap();
                     let file_path = from_utf8(file_path).unwrap();
                     let file = File::open(file_path).unwrap();
@@ -515,10 +557,15 @@ pub mod runtime {
             }
 
             // `print()`
+            #[derive(Debug)]
             struct PrintFunc;
 
             impl RuntimeFunction for PrintFunc {
-                fn call<'s>(&mut self, args: &[RuntimeType<'s>]) -> RuntimeType<'s> {
+                fn call<'s>(
+                    &mut self,
+                    args: Vec<RuntimeType<'s>>,
+                    _tokens_map: &'s Tokenizer,
+                ) -> RuntimeType<'s> {
                     for val in args {
                         if let Some(bts) = val.as_bytes() {
                             stdout().write(bts).ok();
@@ -530,10 +577,15 @@ pub mod runtime {
             }
 
             // println()
+            #[derive(Debug)]
             struct PrintLnFunc;
 
             impl RuntimeFunction for PrintLnFunc {
-                fn call<'s>(&mut self, args: &[RuntimeType<'s>]) -> RuntimeType<'s> {
+                fn call<'s>(
+                    &mut self,
+                    args: Vec<RuntimeType<'s>>,
+                    _tokens_map: &'s Tokenizer,
+                ) -> RuntimeType<'s> {
                     for val in args {
                         if let Some(bts) = val.as_bytes() {
                             stdout().write(bts).ok();
@@ -545,18 +597,22 @@ pub mod runtime {
                 }
             }
 
-            self.functions.insert(
+            self.variables.insert(
                 "toString".to_string(),
-                Box::new(ToStringFunc::new(resources_files.clone())),
+                RuntimeType::Function(Rc::new(ToStringFunc::new(resources_files.clone()))),
             );
-            self.functions.insert(
+            self.variables.insert(
                 "openFile".to_string(),
-                Box::new(OpenFileFunc::new(resources_files)),
+                RuntimeType::Function(Rc::new(OpenFileFunc::new(resources_files))),
             );
-            self.functions
-                .insert("print".to_string(), Box::new(PrintFunc));
-            self.functions
-                .insert("println".to_string(), Box::new(PrintLnFunc));
+            self.variables.insert(
+                "print".to_string(),
+                RuntimeType::Function(Rc::new(PrintFunc)),
+            );
+            self.variables.insert(
+                "println".to_string(),
+                RuntimeType::Function(Rc::new(PrintLnFunc)),
+            );
             self.variables.insert(
                 "Lenar".to_string(),
                 RuntimeType::Instance(Rc::new(LenarGlobal)),
@@ -578,13 +634,15 @@ pub mod runtime {
             &mut self,
             name: impl AsRef<str>,
             scope_id: &[usize],
-            args: &[RuntimeType<'a>],
+            args: Vec<RuntimeType<'a>>,
+            tokens_map: &'a Tokenizer,
         ) -> RuntimeType<'a> {
             let scope = self.get_scope(&mut scope_id.iter());
+            let func = scope.variables.get_mut(name.as_ref());
 
-            let func = scope.functions.get_mut(name.as_ref());
-            if let Some(func) = func {
-                func.call(args)
+            if let Some(RuntimeType::Function(func)) = func {
+                let func = Rc::get_mut(func).unwrap();
+                func.call(args, tokens_map)
             } else {
                 panic!("Function '{}' is not defined in this scope.", name.as_ref());
             }
@@ -605,14 +663,20 @@ pub mod runtime {
         pub fn get_variable(
             &mut self,
             name: impl AsRef<str>,
-            scope_id: &[usize],
+            path: &mut Iter<usize>,
         ) -> RuntimeType<'a> {
-            let scope = self.get_scope(&mut scope_id.iter());
-            scope
-                .variables
-                .get(name.as_ref())
-                .cloned()
-                .unwrap_or(RuntimeType::Void)
+            let var = self.variables.get(name.as_ref());
+
+            if let Some(var) = var {
+                var.clone()
+            } else {
+                let scope = path.next();
+                if let Some(scope) = scope {
+                    self.scopes.get_mut(scope).unwrap().get_variable(name, path)
+                } else {
+                    RuntimeType::Void
+                }
+            }
         }
 
         pub fn get_variable_by_path(
@@ -710,12 +774,54 @@ pub mod runtime {
                     }
                 }
 
-                context.call_function(fn_name, scope_path, &args)
+                context.call_function(fn_name, scope_path, args, tokens_map)
             }
             Token::StringVal { value } => RuntimeType::String(value.to_string()),
             Token::BytesVal { value } => RuntimeType::Bytes(value),
-            Token::VarRef { var_name } => context.get_variable(var_name, scope_path),
+            Token::VarRef { var_name } => context.get_variable(var_name, &mut scope_path.iter()),
             Token::PropertyRef { path } => context.get_variable_by_path(path, scope_path),
+            Token::FnDef {
+                arguments_block,
+                block_value,
+            } => {
+                // User-defined function
+                #[derive(Debug)]
+                struct Function {
+                    arguments_block: usize,
+                    block_value: usize,
+                }
+
+                impl RuntimeFunction for Function {
+                    fn call<'s>(
+                        &mut self,
+                        mut args: Vec<RuntimeType<'s>>,
+                        tokens_map: &'s Tokenizer,
+                    ) -> RuntimeType<'s> {
+                        let mut context = Context::default();
+
+                        context.setup_globals();
+
+                        let arguments_block = tokens_map.get_token(self.arguments_block).unwrap();
+                        if let Token::Block { tokens } = arguments_block {
+                            for token in tokens {
+                                let arg_token = tokens_map.get_token(*token).unwrap();
+                                if let Token::VarRef { var_name } = arg_token {
+                                    let arg_value = args.remove(0);
+                                    context.variables.insert(var_name.to_owned(), arg_value);
+                                }
+                            }
+                        }
+
+                        let block_token = tokens_map.get_token(self.block_value).unwrap();
+
+                        compute_expr(block_token, tokens_map, &mut context, &[])
+                    }
+                }
+                RuntimeType::Function(Rc::new(Function {
+                    arguments_block: *arguments_block,
+                    block_value: *block_value,
+                }))
+            }
         }
     }
 }

@@ -5,12 +5,12 @@ fn main() {
     use tokenizer::*;
 
     let code = r#"
-        let val = "last value";
-        {
-            let val = "first value!";
-            println(val);
-        }
-        println(val);
+        let func = fn(x) { 
+            println(x); 
+            "hello world"
+        };
+ 
+        println(func("hola"));
         println(Lenar.version);
     "#;
 
