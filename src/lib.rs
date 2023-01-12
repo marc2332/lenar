@@ -665,15 +665,22 @@ pub mod runtime {
                     let tok = tokens_map.get_token(*tok).unwrap();
                     let res = if matches!(tok, Token::Block { .. }) {
                         next_scope_id += 1;
+                        // Create block scope
                         context.create_scope(scope_path, next_scope_id);
+
+                        // Run the block expression in the new scope
                         let scope_path = &[scope_path, &[next_scope_id]].concat();
                         let return_val = compute_expr(tok, tokens_map, context, scope_path);
+
+                        // Remove the scope
                         context.drop_scope(scope_path, next_scope_id);
                         return_val
                     } else {
+                        // Run the expression in the inherited scope
                         compute_expr(tok, tokens_map, context, scope_path)
                     };
 
+                    // Return the returned value from the expressin as result of this block
                     if is_last {
                         return res;
                     }
