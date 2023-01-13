@@ -399,6 +399,7 @@ pub mod runtime {
         Usize(usize),
         List(Vec<RuntimeType<'a>>),
         String(String),
+        Str(&'a str),
         Bytes(&'a [u8]),
         OwnedBytes(Vec<u8>),
         Void,
@@ -511,7 +512,7 @@ pub mod runtime {
                             file.read_to_end(&mut buf).unwrap();
                             RuntimeType::OwnedBytes(buf)
                         }
-                        _ => RuntimeType::Bytes("test".as_bytes()),
+                        _ => RuntimeType::Void,
                     }
                 }
             }
@@ -776,7 +777,7 @@ pub mod runtime {
 
                 context.call_function(fn_name, scope_path, args, tokens_map)
             }
-            Token::StringVal { value } => RuntimeType::String(value.to_string()),
+            Token::StringVal { value } => RuntimeType::Str(value),
             Token::BytesVal { value } => RuntimeType::Bytes(value),
             Token::VarRef { var_name } => context.get_variable(var_name, &mut scope_path.iter()),
             Token::PropertyRef { path } => context.get_variable_by_path(path, scope_path),

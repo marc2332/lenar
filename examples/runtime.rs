@@ -9,7 +9,14 @@ fn main() {
             println(x); 
             "hello world"
         };
- 
+
+        let read = fn(file_path){
+            let file = openFile(file_path);
+            toString(file)
+        };
+
+        println(read("examples/fs.rs"));
+         
         println(func("hola"));
         println(Lenar.version);
     "#;
