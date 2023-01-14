@@ -378,7 +378,7 @@ pub mod runtime {
 
         /// Run the Runtime
         pub fn run(&self) {
-            let mut context = Context::default();
+            let mut context = Scope::default();
 
             context.setup_globals();
 
@@ -468,21 +468,21 @@ pub mod runtime {
             tokens_map: &'s Tokenizer,
         ) -> RuntimeType<'s>;
 
-        // TODO could be interesting to add some metadata methods, such as name.
+        fn get_name<'s>(&self) -> &'s str;
     }
 
-    /// A thread context
+    /// A scope context
     ///
     /// TODO
     /// - Implement bottom->top scope finding recursion, e.g, value resolvers as `call_function` or
     ///   `get_variable` need to find the called function's scope ID from the caller scope ID
     #[derive(Default)]
-    pub struct Context<'a> {
+    pub struct Scope<'a> {
         variables: HashMap<String, RuntimeType<'a>>,
-        scopes: HashMap<usize, Context<'a>>,
+        scopes: HashMap<usize, Scope<'a>>,
     }
 
-    impl<'a> Context<'a> {
+    impl<'a> Scope<'a> {
         /// Some builtins varibles and values defined in the global scope, such as `println()`
         pub fn setup_globals(&mut self) {
             let resources_files = Rc::new(RefCell::new(Slab::<File>::new()));
@@ -515,6 +515,10 @@ pub mod runtime {
                         _ => RuntimeType::Void,
                     }
                 }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "toString"
+                }
             }
 
             #[derive(Debug)]
@@ -542,6 +546,10 @@ pub mod runtime {
                     let rid = resources_files.insert(file);
 
                     RuntimeType::Usize(rid)
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "openFile"
                 }
             }
 
@@ -575,6 +583,10 @@ pub mod runtime {
                     stdout().flush().ok();
                     RuntimeType::Void
                 }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "print"
+                }
             }
 
             // println()
@@ -595,6 +607,10 @@ pub mod runtime {
                     stdout().write("\n".as_bytes()).ok();
                     stdout().flush().ok();
                     RuntimeType::Void
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "println"
                 }
             }
 
@@ -620,7 +636,7 @@ pub mod runtime {
             );
         }
 
-        pub fn get_scope(&mut self, path: &mut Iter<usize>) -> &mut Context<'a> {
+        pub fn get_scope(&mut self, path: &mut Iter<usize>) -> &mut Scope<'a> {
             let scope = path.next();
 
             if let Some(scope) = scope {
@@ -701,7 +717,7 @@ pub mod runtime {
         /// Create a new scope given an ID in the specified scope by a path
         pub fn create_scope(&mut self, scope_path: &[usize], scope_id: usize) {
             let scope = self.get_scope(&mut scope_path.iter());
-            let mut new_scope = Context::default();
+            let mut new_scope = Scope::default();
 
             new_scope.setup_globals();
             scope.scopes.insert(scope_id, new_scope);
@@ -718,7 +734,7 @@ pub mod runtime {
     fn compute_expr<'a>(
         token: &'a Token,
         tokens_map: &'a Tokenizer,
-        context: &mut Context<'a>,
+        scope: &mut Scope<'a>,
         scope_path: &[usize],
     ) -> RuntimeType<'a> {
         match token {
@@ -731,18 +747,18 @@ pub mod runtime {
                     let res = if matches!(tok, Token::Block { .. }) {
                         next_scope_id += 1;
                         // Create block scope
-                        context.create_scope(scope_path, next_scope_id);
+                        scope.create_scope(scope_path, next_scope_id);
 
                         // Run the block expression in the new scope
                         let scope_path = &[scope_path, &[next_scope_id]].concat();
-                        let return_val = compute_expr(tok, tokens_map, context, scope_path);
+                        let return_val = compute_expr(tok, tokens_map, scope, scope_path);
 
                         // Remove the scope
-                        context.drop_scope(scope_path, next_scope_id);
+                        scope.drop_scope(scope_path, next_scope_id);
                         return_val
                     } else {
                         // Run the expression in the inherited scope
-                        compute_expr(tok, tokens_map, context, scope_path)
+                        compute_expr(tok, tokens_map, scope, scope_path)
                     };
 
                     // Return the returned value from the expressin as result of this block
@@ -758,8 +774,8 @@ pub mod runtime {
                 block_value,
             } => {
                 let value = tokens_map.get_token(*block_value).unwrap();
-                let res = compute_expr(value, tokens_map, context, scope_path);
-                context.define_variable(var_name, scope_path, res);
+                let res = compute_expr(value, tokens_map, scope, scope_path);
+                scope.define_variable(var_name, scope_path, res);
 
                 RuntimeType::Void
             }
@@ -769,18 +785,18 @@ pub mod runtime {
                 if let Token::Block { tokens } = value {
                     for tok in tokens {
                         let tok = tokens_map.get_token(*tok).unwrap();
-                        let res = compute_expr(tok, tokens_map, context, scope_path);
+                        let res = compute_expr(tok, tokens_map, scope, scope_path);
 
                         args.push(res);
                     }
                 }
 
-                context.call_function(fn_name, scope_path, args, tokens_map)
+                scope.call_function(fn_name, scope_path, args, tokens_map)
             }
             Token::StringVal { value } => RuntimeType::Str(value),
             Token::BytesVal { value } => RuntimeType::Bytes(value),
-            Token::VarRef { var_name } => context.get_variable(var_name, &mut scope_path.iter()),
-            Token::PropertyRef { path } => context.get_variable_by_path(path, scope_path),
+            Token::VarRef { var_name } => scope.get_variable(var_name, &mut scope_path.iter()),
+            Token::PropertyRef { path } => scope.get_variable_by_path(path, scope_path),
             Token::FnDef {
                 arguments_block,
                 block_value,
@@ -798,7 +814,7 @@ pub mod runtime {
                         mut args: Vec<RuntimeType<'s>>,
                         tokens_map: &'s Tokenizer,
                     ) -> RuntimeType<'s> {
-                        let mut context = Context::default();
+                        let mut context = Scope::default();
 
                         context.setup_globals();
 
@@ -816,6 +832,10 @@ pub mod runtime {
                         let block_token = tokens_map.get_token(self.block_value).unwrap();
 
                         compute_expr(block_token, tokens_map, &mut context, &[])
+                    }
+
+                    fn get_name<'s>(&self) -> &'s str {
+                        "Anonymous"
                     }
                 }
                 RuntimeType::Function(Rc::new(Function {
