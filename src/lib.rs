@@ -408,6 +408,10 @@ pub mod runtime {
     }
 
     impl<'a> RuntimeType<'a> {
+        pub fn is_void(&self) -> bool {
+            matches!(self, Self::Void)
+        }
+
         pub fn as_list(&self) -> Option<&Vec<RuntimeType<'a>>> {
             if let Self::List(v) = self {
                 Some(v)
@@ -682,17 +686,23 @@ pub mod runtime {
             name: impl AsRef<str>,
             path: &mut Iter<usize>,
         ) -> RuntimeType<'a> {
-            let var = self.variables.get(name.as_ref());
+            let scope = path.next();
+            if let Some(scope) = scope {
+                let result = self
+                    .scopes
+                    .get_mut(scope)
+                    .unwrap()
+                    .get_variable(name.as_ref(), path);
+                if !result.is_void() {
+                    return result;
+                }
+            }
 
+            let var = self.variables.get(name.as_ref());
             if let Some(var) = var {
                 var.clone()
             } else {
-                let scope = path.next();
-                if let Some(scope) = scope {
-                    self.scopes.get_mut(scope).unwrap().get_variable(name, path)
-                } else {
-                    RuntimeType::Void
-                }
+                RuntimeType::Void
             }
         }
 

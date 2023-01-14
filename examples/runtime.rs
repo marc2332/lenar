@@ -5,6 +5,14 @@ fn main() {
     use tokenizer::*;
 
     let code = r#"
+
+        let a = "1";
+        {
+            let a = "2";
+            println(a);
+        }
+        println(a);
+
         let func = fn(x) { 
             println(x); 
             "hello world"
