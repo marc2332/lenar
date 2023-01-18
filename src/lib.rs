@@ -573,6 +573,20 @@ pub mod runtime {
             #[derive(Debug)]
             struct PrintFunc;
 
+            impl PrintFunc {
+                pub fn write<'s>(&self, value: &RuntimeType<'s>) {
+                    match value {
+                        RuntimeType::Bytes(bts) => {
+                            stdout().write(bts).ok();
+                        }
+                        RuntimeType::Function(func) => {
+                            stdout().write(func.get_name().as_bytes()).ok();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
             impl RuntimeFunction for PrintFunc {
                 fn call<'s>(
                     &mut self,
@@ -580,9 +594,7 @@ pub mod runtime {
                     _tokens_map: &'s Tokenizer,
                 ) -> RuntimeType<'s> {
                     for val in args {
-                        if let Some(bts) = val.as_bytes() {
-                            stdout().write(bts).ok();
-                        }
+                        self.write(&val);
                     }
                     stdout().flush().ok();
                     RuntimeType::Void
@@ -603,10 +615,9 @@ pub mod runtime {
                     args: Vec<RuntimeType<'s>>,
                     _tokens_map: &'s Tokenizer,
                 ) -> RuntimeType<'s> {
+                    let printer = PrintFunc;
                     for val in args {
-                        if let Some(bts) = val.as_bytes() {
-                            stdout().write(bts).ok();
-                        }
+                        printer.write(&val);
                     }
                     stdout().write("\n".as_bytes()).ok();
                     stdout().flush().ok();

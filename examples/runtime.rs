@@ -18,6 +18,8 @@ fn main() {
             "hello world"
         };
 
+        print(func);
+
         let read = fn(file_path){
             let file = openFile(file_path);
             toString(file)
