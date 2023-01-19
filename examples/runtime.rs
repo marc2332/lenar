@@ -29,6 +29,7 @@ fn main() {
          
         println(func("hola"));
         println(Lenar.version);
+        print(Lenar)
     "#;
 
     let tokenizer = Tokenizer::new(&code);

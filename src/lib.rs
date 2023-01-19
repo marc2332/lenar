@@ -398,7 +398,6 @@ pub mod runtime {
     pub enum RuntimeType<'a> {
         Usize(usize),
         List(Vec<RuntimeType<'a>>),
-        String(String),
         Str(&'a str),
         Bytes(&'a [u8]),
         OwnedBytes(Vec<u8>),
@@ -414,14 +413,6 @@ pub mod runtime {
 
         pub fn as_list(&self) -> Option<&Vec<RuntimeType<'a>>> {
             if let Self::List(v) = self {
-                Some(v)
-            } else {
-                None
-            }
-        }
-
-        pub fn as_string(&self) -> Option<&String> {
-            if let Self::String(v) = self {
                 Some(v)
             } else {
                 None
@@ -462,7 +453,10 @@ pub mod runtime {
                 RuntimeType::Void
             }
         }
+
         fn get_prop(&self, prop: &str) -> RuntimeType<'a>;
+
+        fn get_name<'s>(&self) -> &'s str;
     }
 
     pub trait RuntimeFunction: Debug {
@@ -567,6 +561,10 @@ pub mod runtime {
                         _ => RuntimeType::Void,
                     }
                 }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "Lenar"
+                }
             }
 
             // `print()`
@@ -581,6 +579,9 @@ pub mod runtime {
                         }
                         RuntimeType::Function(func) => {
                             stdout().write(func.get_name().as_bytes()).ok();
+                        }
+                        RuntimeType::Instance(instance) => {
+                            stdout().write(instance.get_name().as_bytes()).ok();
                         }
                         _ => {}
                     }
