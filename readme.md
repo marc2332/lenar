@@ -1,14 +1,19 @@
 # 🌑 lenar -  interpreted programming language
 
 ```rust
-let value = "test";
-println(value);
-{
-    println("hi");
-}
+if(isEqual("test" "test")) {
+    let something = fn(v) {
+        println(Lenar.version);
+        "hi"
+    };
+    println(something("hey"));
+};
+
+println(if(isEqual("test" "test")) { "wow" });
 ```
 
 - Incredibly fast handcrafted parser
 - Minimal dependencies
+- Easy to embed
 
 [MIT License](./LICENSE.md)

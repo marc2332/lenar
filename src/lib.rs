@@ -25,6 +25,10 @@ pub mod tokenizer {
             arguments_block: TokenKey,
             block_value: TokenKey,
         },
+        IfDef {
+            expr: TokenKey,
+            block_value: TokenKey,
+        },
         StringVal {
             value: String,
         },
@@ -255,7 +259,27 @@ pub mod tokenizer {
                         let item_name = slice_until('(', &mut chars);
                         let item_name = format!("{}{}", val, item_name);
 
-                        if item_name == "fn" {
+                        if item_name == "if" {
+                            let expr_block = Token::Block { tokens: Vec::new() };
+                            let expr_block_key = tokens_map.insert(expr_block);
+
+                            let value_block = Token::Block { tokens: Vec::new() };
+                            let block_key = tokens_map.insert(value_block);
+
+                            let var_def = Token::IfDef {
+                                block_value: block_key,
+                                expr: expr_block_key,
+                            };
+                            let var_key = tokens_map.insert(var_def);
+
+                            let current_block = tokens_map.get_mut(current_block).unwrap();
+                            current_block.add_token(var_key);
+
+                            block_indexes.push((block_key, BlockType::FuncValue));
+                            block_indexes.push((expr_block_key, BlockType::FuncCall));
+
+                            last_action = PerfomedAction::CalledFunction;
+                        } else if item_name == "fn" {
                             let args_block = Token::Block { tokens: Vec::new() };
                             let args_block_key = tokens_map.insert(args_block);
 
@@ -292,6 +316,23 @@ pub mod tokenizer {
 
                             last_action = PerfomedAction::CalledFunction;
                         }
+
+                        continue;
+                    } else if count_unexpected_between(i, '.', code) == 0 {
+                        let attrs_path = slice_until_delimeter(&mut chars);
+                        let attrs_path = format!("{}{}", val, attrs_path);
+                        let path = attrs_path
+                            .split('.')
+                            .map(|v| v.to_string())
+                            .collect::<Vec<String>>();
+
+                        let var_ref = Token::PropertyRef { path };
+                        let var_ref_key = tokens_map.insert(var_ref);
+
+                        let current_block = tokens_map.get_mut(current_block).unwrap();
+                        current_block.add_token(var_ref_key);
+
+                        last_action = PerfomedAction::ReferencedVariable;
 
                         continue;
                     } else if count_unexpected_between(i, '.', code) == 0 {
@@ -402,8 +443,26 @@ pub mod runtime {
         Bytes(&'a [u8]),
         OwnedBytes(Vec<u8>),
         Void,
+        Bool(bool),
         Instance(Rc<dyn RuntimeInstance<'a>>),
         Function(Rc<dyn RuntimeFunction>),
+    }
+
+    impl PartialEq for RuntimeType<'_> {
+        fn eq(&self, other: &Self) -> bool {
+            match (self, other) {
+                (Self::Usize(l0), Self::Usize(r0)) => l0 == r0,
+                (Self::List(l0), Self::List(r0)) => l0 == r0,
+                (Self::Str(l0), Self::Str(r0)) => l0 == r0,
+                (Self::Bytes(l0), Self::Bytes(r0)) => l0 == r0,
+                (Self::OwnedBytes(l0), Self::OwnedBytes(r0)) => l0 == r0,
+                (Self::Bool(l0), Self::Bool(r0)) => l0 == r0,
+                (Self::Instance(_), Self::Instance(_)) => false,
+                (Self::Function(_), Self::Function(_)) => false,
+                (Self::Void, Self::Void) => true,
+                _ => false,
+            }
+        }
     }
 
     impl<'a> RuntimeType<'a> {
@@ -630,6 +689,30 @@ pub mod runtime {
                 }
             }
 
+            // isEqual()
+            #[derive(Debug)]
+            struct IsEqual;
+
+            impl RuntimeFunction for IsEqual {
+                fn call<'s>(
+                    &mut self,
+                    args: Vec<RuntimeType<'s>>,
+                    _tokens_map: &'s Tokenizer,
+                ) -> RuntimeType<'s> {
+                    let args = args.get(0).zip(args.get(1));
+                    let res = if let Some((a, b)) = args {
+                        a.eq(b)
+                    } else {
+                        false
+                    };
+                    RuntimeType::Bool(res)
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "IsEqual"
+                }
+            }
+
             self.variables.insert(
                 "toString".to_string(),
                 RuntimeType::Function(Rc::new(ToStringFunc::new(resources_files.clone()))),
@@ -649,6 +732,10 @@ pub mod runtime {
             self.variables.insert(
                 "Lenar".to_string(),
                 RuntimeType::Instance(Rc::new(LenarGlobal)),
+            );
+            self.variables.insert(
+                "isEqual".to_string(),
+                RuntimeType::Function(Rc::new(IsEqual)),
             );
         }
 
@@ -783,7 +870,7 @@ pub mod runtime {
                         compute_expr(tok, tokens_map, scope, scope_path)
                     };
 
-                    // Return the returned value from the expressin as result of this block
+                    // Return the returned value from the expression as result of this block
                     if is_last {
                         return res;
                     }
@@ -864,6 +951,16 @@ pub mod runtime {
                     arguments_block: *arguments_block,
                     block_value: *block_value,
                 }))
+            }
+            Token::IfDef { expr, block_value } => {
+                let expr_token = tokens_map.get_token(*expr).unwrap();
+                let expr_res = compute_expr(expr_token, tokens_map, scope, scope_path);
+                if RuntimeType::Bool(true) == expr_res {
+                    let expr_body_token = tokens_map.get_token(*block_value).unwrap();
+                    compute_expr(expr_body_token, tokens_map, scope, scope_path)
+                } else {
+                    RuntimeType::Void
+                }
             }
         }
     }

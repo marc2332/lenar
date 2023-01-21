@@ -5,31 +5,15 @@ fn main() {
     use tokenizer::*;
 
     let code = r#"
-
-        let a = "1";
-        {
-            let a = "2";
-            println(a);
-        }
-        println(a);
-
-        let func = fn(x) { 
-            println(x); 
-            "hello world"
+        if(isEqual("test" "test")) {
+            let something = fn(v) {
+                println(Lenar.version);
+                "hi"
+            };
+            println(something("hey"));
         };
 
-        print(func);
-
-        let read = fn(file_path){
-            let file = openFile(file_path);
-            toString(file)
-        };
-
-        println(read("examples/fs.rs"));
-         
-        println(func("hola"));
-        println(Lenar.version);
-        print(Lenar)
+        println(if(isEqual("test" "test")) { "wow" });
     "#;
 
     let tokenizer = Tokenizer::new(&code);
