@@ -72,7 +72,7 @@ pub mod tokenizer {
 
     #[inline(always)]
     fn slice_until_delimeter(chars: &mut Peekable<Chars>) -> String {
-        let until = [',', ';', ')', '}'];
+        let until = [',', ';', ')', '}', ' ', '\n'];
         let mut s = String::new();
         while let Some(c) = chars.next_if(|v| !until.contains(v)) {
             s.push_str(&c.to_string());
@@ -633,6 +633,9 @@ pub mod runtime {
             impl PrintFunc {
                 pub fn write<'s>(&self, value: &RuntimeType<'s>) {
                     match value {
+                        RuntimeType::OwnedBytes(bts) => {
+                            stdout().write(bts).ok();
+                        }
                         RuntimeType::Bytes(bts) => {
                             stdout().write(bts).ok();
                         }
@@ -749,22 +752,46 @@ pub mod runtime {
             }
         }
 
+        pub fn get_function(
+            &mut self,
+            name: impl AsRef<str>,
+            path: &mut Iter<usize>,
+        ) -> Option<&mut Rc<dyn RuntimeFunction>> {
+            let scope = path.next();
+            if let Some(scope) = scope {
+                let result = self
+                    .scopes
+                    .get_mut(scope)
+                    .unwrap()
+                    .get_function(name.as_ref(), path);
+                if result.is_some() {
+                    return result;
+                }
+            }
+
+            let func = self.variables.get_mut(name.as_ref());
+            if let Some(RuntimeType::Function(func)) = func {
+                Some(func)
+            } else {
+                None
+            }
+        }
+
         /// Call a function given a name, a scope ID and arguments
         pub fn call_function(
             &mut self,
             name: impl AsRef<str>,
-            scope_id: &[usize],
+            path: &mut Iter<usize>,
             args: Vec<RuntimeType<'a>>,
             tokens_map: &'a Tokenizer,
         ) -> RuntimeType<'a> {
-            let scope = self.get_scope(&mut scope_id.iter());
-            let func = scope.variables.get_mut(name.as_ref());
+            let func = self.get_function(name, path);
 
-            if let Some(RuntimeType::Function(func)) = func {
+            if let Some(func) = func {
                 let func = Rc::get_mut(func).unwrap();
                 func.call(args, tokens_map)
             } else {
-                panic!("Function '{}' is not defined in this scope.", name.as_ref());
+                RuntimeType::Void
             }
         }
 
@@ -797,6 +824,12 @@ pub mod runtime {
                 }
             }
 
+            // Currently referencing a variable clones it's value,
+            // Once I add proper value-movements I will do this by calling
+            // `variables.remove(name.as_ref())` and without the `clone()`
+            // This way the variable's owned value will get removed from the scope folder
+            // and returned to the variable referencer
+
             let var = self.variables.get(name.as_ref());
             if let Some(var) = var {
                 var.clone()
@@ -826,9 +859,8 @@ pub mod runtime {
         /// Create a new scope given an ID in the specified scope by a path
         pub fn create_scope(&mut self, scope_path: &[usize], scope_id: usize) {
             let scope = self.get_scope(&mut scope_path.iter());
-            let mut new_scope = Scope::default();
+            let new_scope = Scope::default();
 
-            new_scope.setup_globals();
             scope.scopes.insert(scope_id, new_scope);
         }
 
@@ -900,7 +932,7 @@ pub mod runtime {
                     }
                 }
 
-                scope.call_function(fn_name, scope_path, args, tokens_map)
+                scope.call_function(fn_name, &mut scope_path.iter(), args, tokens_map)
             }
             Token::StringVal { value } => RuntimeType::Str(value),
             Token::BytesVal { value } => RuntimeType::Bytes(value),

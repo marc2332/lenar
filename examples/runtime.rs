@@ -7,8 +7,8 @@ fn main() {
     let code = r#"
         if(isEqual("test" "test")) {
             let something = fn(v) {
-                println(Lenar.version);
-                "hi"
+                println("test");
+                v
             };
             println(something("hey"));
         };
