@@ -14,5 +14,5 @@ fn main() {
 
     let runtime = Runtime::new(tokenizer);
 
-    runtime.run();
+    runtime.evaluate();
 }

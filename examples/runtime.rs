@@ -14,11 +14,15 @@ fn main() {
         };
 
         println(if(isEqual("test" "test")) { "wow" });
+
+        "test"
     "#;
 
     let tokenizer = Tokenizer::new(&code);
 
     let runtime = Runtime::new(tokenizer);
 
-    runtime.run();
+    let res = runtime.evaluate().to_string();
+
+    assert_eq!(res, "test");
 }

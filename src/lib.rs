@@ -26,7 +26,7 @@ pub mod tokenizer {
             block_value: TokenKey,
         },
         IfDef {
-            expr: TokenKey,
+            condition_block: TokenKey,
             block_value: TokenKey,
         },
         StringVal {
@@ -268,7 +268,7 @@ pub mod tokenizer {
 
                             let var_def = Token::IfDef {
                                 block_value: block_key,
-                                expr: expr_block_key,
+                                condition_block: expr_block_key,
                             };
                             let var_key = tokens_map.insert(var_def);
 
@@ -393,7 +393,7 @@ pub mod tokenizer {
 pub mod runtime {
     pub use core::slice::Iter;
     use std::cell::RefCell;
-    use std::fmt::Debug;
+    use std::fmt::{Debug, Display};
     use std::fs::File;
     use std::io::Read;
     use std::str::from_utf8;
@@ -418,7 +418,7 @@ pub mod runtime {
         }
 
         /// Run the Runtime
-        pub fn run(&self) {
+        pub fn evaluate(&self) -> LenarValue {
             let mut context = Scope::default();
 
             context.setup_globals();
@@ -428,17 +428,15 @@ pub mod runtime {
 
             let tok = global_block.unwrap();
 
-            compute_expr(tok, &self.tokenizer, &mut context, &[]);
+            evaluate_expression(tok, &self.tokenizer, &mut context, &[])
         }
     }
 
-    /// The primitive types used in the Runtime
-    /// TODO Would be great if I could avoid using heap-allocated types such as String or Vec and
-    /// instead use the equivalent Rust primitives, just like I do with `RuntimeType::Bytes`
+    /// Runtime values
     #[derive(Debug, Clone)]
-    pub enum RuntimeType<'a> {
+    pub enum LenarValue<'a> {
         Usize(usize),
-        List(Vec<RuntimeType<'a>>),
+        List(Vec<LenarValue<'a>>),
         Str(&'a str),
         Bytes(&'a [u8]),
         OwnedBytes(Vec<u8>),
@@ -448,7 +446,26 @@ pub mod runtime {
         Function(Rc<dyn RuntimeFunction>),
     }
 
-    impl PartialEq for RuntimeType<'_> {
+    impl Display for LenarValue<'_> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                LenarValue::Usize(u) => f.write_str(&format!("{u}")),
+                LenarValue::List(l) => f
+                    .debug_map()
+                    .value(&l.iter().map(|v| format!("{v}")))
+                    .finish(),
+                LenarValue::Str(s) => f.write_str(s),
+                LenarValue::Bytes(b) => f.write_str(from_utf8(b).unwrap()),
+                LenarValue::OwnedBytes(b) => f.write_str(from_utf8(b).unwrap()),
+                LenarValue::Void => f.write_str("Void"),
+                LenarValue::Bool(b) => f.write_str(&format!("{b}")),
+                LenarValue::Instance(i) => f.write_str(i.get_name()),
+                LenarValue::Function(func) => f.write_str(func.get_name()),
+            }
+        }
+    }
+
+    impl PartialEq for LenarValue<'_> {
         fn eq(&self, other: &Self) -> bool {
             match (self, other) {
                 (Self::Usize(l0), Self::Usize(r0)) => l0 == r0,
@@ -465,17 +482,9 @@ pub mod runtime {
         }
     }
 
-    impl<'a> RuntimeType<'a> {
+    impl<'a> LenarValue<'a> {
         pub fn is_void(&self) -> bool {
             matches!(self, Self::Void)
-        }
-
-        pub fn as_list(&self) -> Option<&Vec<RuntimeType<'a>>> {
-            if let Self::List(v) = self {
-                Some(v)
-            } else {
-                None
-            }
         }
 
         pub fn as_bytes(&self) -> Option<&[u8]> {
@@ -485,35 +494,19 @@ pub mod runtime {
                 _ => None,
             }
         }
-
-        pub fn as_void(&self) -> Option<()> {
-            if let Self::Void = self {
-                Some(())
-            } else {
-                None
-            }
-        }
-
-        pub fn as_instance(&self) -> Option<&Rc<dyn RuntimeInstance<'a>>> {
-            if let Self::Instance(v) = self {
-                Some(v)
-            } else {
-                None
-            }
-        }
     }
 
     pub trait RuntimeInstance<'a>: Debug {
-        fn get_props(&self, path: &mut Iter<String>) -> RuntimeType<'a> {
+        fn get_props(&self, path: &mut Iter<String>) -> LenarValue<'a> {
             let prop = path.next();
             if let Some(prop) = prop {
                 self.get_prop(prop)
             } else {
-                RuntimeType::Void
+                LenarValue::Void
             }
         }
 
-        fn get_prop(&self, prop: &str) -> RuntimeType<'a>;
+        fn get_prop(&self, prop: &str) -> LenarValue<'a>;
 
         fn get_name<'s>(&self) -> &'s str;
     }
@@ -521,26 +514,22 @@ pub mod runtime {
     pub trait RuntimeFunction: Debug {
         fn call<'s>(
             &mut self,
-            _args: Vec<RuntimeType<'s>>,
+            _args: Vec<LenarValue<'s>>,
             tokens_map: &'s Tokenizer,
-        ) -> RuntimeType<'s>;
+        ) -> LenarValue<'s>;
 
         fn get_name<'s>(&self) -> &'s str;
     }
 
-    /// A scope context
-    ///
-    /// TODO
-    /// - Implement bottom->top scope finding recursion, e.g, value resolvers as `call_function` or
-    ///   `get_variable` need to find the called function's scope ID from the caller scope ID
+    /// A Scope context
     #[derive(Default)]
     pub struct Scope<'a> {
-        variables: HashMap<String, RuntimeType<'a>>,
+        variables: HashMap<String, LenarValue<'a>>,
         scopes: HashMap<usize, Scope<'a>>,
     }
 
     impl<'a> Scope<'a> {
-        /// Some builtins varibles and values defined in the global scope, such as `println()`
+        /// Define global utilities
         pub fn setup_globals(&mut self) {
             let resources_files = Rc::new(RefCell::new(Slab::<File>::new()));
 
@@ -558,18 +547,18 @@ pub mod runtime {
             impl RuntimeFunction for ToStringFunc {
                 fn call<'s>(
                     &mut self,
-                    args: Vec<RuntimeType<'s>>,
+                    args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Tokenizer,
-                ) -> RuntimeType<'s> {
+                ) -> LenarValue<'s> {
                     match args[0] {
-                        RuntimeType::Usize(rid) => {
+                        LenarValue::Usize(rid) => {
                             let resources_files = self.resources_files.borrow_mut();
                             let mut file = resources_files.get(rid).unwrap();
                             let mut buf = Vec::new();
                             file.read_to_end(&mut buf).unwrap();
-                            RuntimeType::OwnedBytes(buf)
+                            LenarValue::OwnedBytes(buf)
                         }
-                        _ => RuntimeType::Void,
+                        _ => LenarValue::Void,
                     }
                 }
 
@@ -592,9 +581,9 @@ pub mod runtime {
             impl RuntimeFunction for OpenFileFunc {
                 fn call<'s>(
                     &mut self,
-                    args: Vec<RuntimeType<'s>>,
+                    args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Tokenizer,
-                ) -> RuntimeType<'s> {
+                ) -> LenarValue<'s> {
                     let file_path = args[0].as_bytes().unwrap();
                     let file_path = from_utf8(file_path).unwrap();
                     let file = File::open(file_path).unwrap();
@@ -602,7 +591,7 @@ pub mod runtime {
                     let mut resources_files = self.resources_files.borrow_mut();
                     let rid = resources_files.insert(file);
 
-                    RuntimeType::Usize(rid)
+                    LenarValue::Usize(rid)
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -614,10 +603,10 @@ pub mod runtime {
             struct LenarGlobal;
 
             impl<'a> RuntimeInstance<'a> for LenarGlobal {
-                fn get_prop(&self, prop: &str) -> RuntimeType<'a> {
+                fn get_prop(&self, prop: &str) -> LenarValue<'a> {
                     match prop {
-                        "version" => RuntimeType::Bytes("1.0.0".as_bytes()),
-                        _ => RuntimeType::Void,
+                        "version" => LenarValue::Bytes("1.0.0".as_bytes()),
+                        _ => LenarValue::Void,
                     }
                 }
 
@@ -631,18 +620,18 @@ pub mod runtime {
             struct PrintFunc;
 
             impl PrintFunc {
-                pub fn write<'s>(&self, value: &RuntimeType<'s>) {
+                pub fn write<'s>(&self, value: &LenarValue<'s>) {
                     match value {
-                        RuntimeType::OwnedBytes(bts) => {
+                        LenarValue::OwnedBytes(bts) => {
                             stdout().write(bts).ok();
                         }
-                        RuntimeType::Bytes(bts) => {
+                        LenarValue::Bytes(bts) => {
                             stdout().write(bts).ok();
                         }
-                        RuntimeType::Function(func) => {
+                        LenarValue::Function(func) => {
                             stdout().write(func.get_name().as_bytes()).ok();
                         }
-                        RuntimeType::Instance(instance) => {
+                        LenarValue::Instance(instance) => {
                             stdout().write(instance.get_name().as_bytes()).ok();
                         }
                         _ => {}
@@ -653,14 +642,14 @@ pub mod runtime {
             impl RuntimeFunction for PrintFunc {
                 fn call<'s>(
                     &mut self,
-                    args: Vec<RuntimeType<'s>>,
+                    args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Tokenizer,
-                ) -> RuntimeType<'s> {
+                ) -> LenarValue<'s> {
                     for val in args {
                         self.write(&val);
                     }
                     stdout().flush().ok();
-                    RuntimeType::Void
+                    LenarValue::Void
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -675,16 +664,16 @@ pub mod runtime {
             impl RuntimeFunction for PrintLnFunc {
                 fn call<'s>(
                     &mut self,
-                    args: Vec<RuntimeType<'s>>,
+                    args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Tokenizer,
-                ) -> RuntimeType<'s> {
+                ) -> LenarValue<'s> {
                     let printer = PrintFunc;
                     for val in args {
                         printer.write(&val);
                     }
                     stdout().write("\n".as_bytes()).ok();
                     stdout().flush().ok();
-                    RuntimeType::Void
+                    LenarValue::Void
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -699,16 +688,16 @@ pub mod runtime {
             impl RuntimeFunction for IsEqual {
                 fn call<'s>(
                     &mut self,
-                    args: Vec<RuntimeType<'s>>,
+                    args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Tokenizer,
-                ) -> RuntimeType<'s> {
+                ) -> LenarValue<'s> {
                     let args = args.get(0).zip(args.get(1));
                     let res = if let Some((a, b)) = args {
                         a.eq(b)
                     } else {
                         false
                     };
-                    RuntimeType::Bool(res)
+                    LenarValue::Bool(res)
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -718,27 +707,27 @@ pub mod runtime {
 
             self.variables.insert(
                 "toString".to_string(),
-                RuntimeType::Function(Rc::new(ToStringFunc::new(resources_files.clone()))),
+                LenarValue::Function(Rc::new(ToStringFunc::new(resources_files.clone()))),
             );
             self.variables.insert(
                 "openFile".to_string(),
-                RuntimeType::Function(Rc::new(OpenFileFunc::new(resources_files))),
+                LenarValue::Function(Rc::new(OpenFileFunc::new(resources_files))),
             );
             self.variables.insert(
                 "print".to_string(),
-                RuntimeType::Function(Rc::new(PrintFunc)),
+                LenarValue::Function(Rc::new(PrintFunc)),
             );
             self.variables.insert(
                 "println".to_string(),
-                RuntimeType::Function(Rc::new(PrintLnFunc)),
+                LenarValue::Function(Rc::new(PrintLnFunc)),
             );
             self.variables.insert(
                 "Lenar".to_string(),
-                RuntimeType::Instance(Rc::new(LenarGlobal)),
+                LenarValue::Instance(Rc::new(LenarGlobal)),
             );
             self.variables.insert(
                 "isEqual".to_string(),
-                RuntimeType::Function(Rc::new(IsEqual)),
+                LenarValue::Function(Rc::new(IsEqual)),
             );
         }
 
@@ -770,7 +759,7 @@ pub mod runtime {
             }
 
             let func = self.variables.get_mut(name.as_ref());
-            if let Some(RuntimeType::Function(func)) = func {
+            if let Some(LenarValue::Function(func)) = func {
                 Some(func)
             } else {
                 None
@@ -782,16 +771,16 @@ pub mod runtime {
             &mut self,
             name: impl AsRef<str>,
             path: &mut Iter<usize>,
-            args: Vec<RuntimeType<'a>>,
+            args: Vec<LenarValue<'a>>,
             tokens_map: &'a Tokenizer,
-        ) -> RuntimeType<'a> {
+        ) -> LenarValue<'a> {
             let func = self.get_function(name, path);
 
             if let Some(func) = func {
                 let func = Rc::get_mut(func).unwrap();
                 func.call(args, tokens_map)
             } else {
-                RuntimeType::Void
+                LenarValue::Void
             }
         }
 
@@ -800,7 +789,7 @@ pub mod runtime {
             &mut self,
             name: impl AsRef<str>,
             scope_id: &[usize],
-            value: RuntimeType<'a>,
+            value: LenarValue<'a>,
         ) {
             let scope = self.get_scope(&mut scope_id.iter());
             scope.variables.insert(name.as_ref().to_string(), value);
@@ -811,7 +800,7 @@ pub mod runtime {
             &mut self,
             name: impl AsRef<str>,
             path: &mut Iter<usize>,
-        ) -> RuntimeType<'a> {
+        ) -> LenarValue<'a> {
             let scope = path.next();
             if let Some(scope) = scope {
                 let result = self
@@ -834,7 +823,7 @@ pub mod runtime {
             if let Some(var) = var {
                 var.clone()
             } else {
-                RuntimeType::Void
+                LenarValue::Void
             }
         }
 
@@ -842,17 +831,17 @@ pub mod runtime {
             &mut self,
             path: &'a [String],
             scope_id: &[usize],
-        ) -> RuntimeType<'a> {
+        ) -> LenarValue<'a> {
             let mut path = path.iter();
             let scope = self.get_scope(&mut scope_id.iter());
 
             let var_holder = path.next().unwrap();
 
-            if let Some(RuntimeType::Instance(instance)) = scope.variables.get_mut(var_holder) {
+            if let Some(LenarValue::Instance(instance)) = scope.variables.get_mut(var_holder) {
                 let instance = Rc::get_mut(instance).unwrap();
                 instance.get_props(&mut path)
             } else {
-                RuntimeType::Void
+                LenarValue::Void
             }
         }
 
@@ -871,13 +860,13 @@ pub mod runtime {
         }
     }
 
-    /// Resolve an expression to a value
-    fn compute_expr<'a>(
+    /// Evaluate an expression to a value
+    fn evaluate_expression<'a>(
         token: &'a Token,
         tokens_map: &'a Tokenizer,
         scope: &mut Scope<'a>,
         scope_path: &[usize],
-    ) -> RuntimeType<'a> {
+    ) -> LenarValue<'a> {
         match token {
             Token::Block { tokens } => {
                 let mut next_scope_id = scope_path.last().copied().unwrap_or(0);
@@ -892,14 +881,14 @@ pub mod runtime {
 
                         // Run the block expression in the new scope
                         let scope_path = &[scope_path, &[next_scope_id]].concat();
-                        let return_val = compute_expr(tok, tokens_map, scope, scope_path);
+                        let return_val = evaluate_expression(tok, tokens_map, scope, scope_path);
 
                         // Remove the scope
                         scope.drop_scope(scope_path, next_scope_id);
                         return_val
                     } else {
                         // Run the expression in the inherited scope
-                        compute_expr(tok, tokens_map, scope, scope_path)
+                        evaluate_expression(tok, tokens_map, scope, scope_path)
                     };
 
                     // Return the returned value from the expression as result of this block
@@ -908,17 +897,17 @@ pub mod runtime {
                     }
                 }
 
-                RuntimeType::Void
+                LenarValue::Void
             }
             Token::VarDef {
                 var_name,
                 block_value,
             } => {
                 let value = tokens_map.get_token(*block_value).unwrap();
-                let res = compute_expr(value, tokens_map, scope, scope_path);
+                let res = evaluate_expression(value, tokens_map, scope, scope_path);
                 scope.define_variable(var_name, scope_path, res);
 
-                RuntimeType::Void
+                LenarValue::Void
             }
             Token::FunctionCall { arguments, fn_name } => {
                 let value = tokens_map.get_token(*arguments).unwrap();
@@ -926,7 +915,7 @@ pub mod runtime {
                 if let Token::Block { tokens } = value {
                     for tok in tokens {
                         let tok = tokens_map.get_token(*tok).unwrap();
-                        let res = compute_expr(tok, tokens_map, scope, scope_path);
+                        let res = evaluate_expression(tok, tokens_map, scope, scope_path);
 
                         args.push(res);
                     }
@@ -934,8 +923,8 @@ pub mod runtime {
 
                 scope.call_function(fn_name, &mut scope_path.iter(), args, tokens_map)
             }
-            Token::StringVal { value } => RuntimeType::Str(value),
-            Token::BytesVal { value } => RuntimeType::Bytes(value),
+            Token::StringVal { value } => LenarValue::Str(value),
+            Token::BytesVal { value } => LenarValue::Bytes(value),
             Token::VarRef { var_name } => scope.get_variable(var_name, &mut scope_path.iter()),
             Token::PropertyRef { path } => scope.get_variable_by_path(path, scope_path),
             Token::FnDef {
@@ -952,13 +941,14 @@ pub mod runtime {
                 impl RuntimeFunction for Function {
                     fn call<'s>(
                         &mut self,
-                        mut args: Vec<RuntimeType<'s>>,
+                        mut args: Vec<LenarValue<'s>>,
                         tokens_map: &'s Tokenizer,
-                    ) -> RuntimeType<'s> {
+                    ) -> LenarValue<'s> {
                         let mut context = Scope::default();
 
                         context.setup_globals();
 
+                        // Define each argument as a variable in the function scope
                         let arguments_block = tokens_map.get_token(self.arguments_block).unwrap();
                         if let Token::Block { tokens } = arguments_block {
                             for token in tokens {
@@ -972,26 +962,29 @@ pub mod runtime {
 
                         let block_token = tokens_map.get_token(self.block_value).unwrap();
 
-                        compute_expr(block_token, tokens_map, &mut context, &[])
+                        evaluate_expression(block_token, tokens_map, &mut context, &[])
                     }
 
                     fn get_name<'s>(&self) -> &'s str {
                         "Anonymous"
                     }
                 }
-                RuntimeType::Function(Rc::new(Function {
+                LenarValue::Function(Rc::new(Function {
                     arguments_block: *arguments_block,
                     block_value: *block_value,
                 }))
             }
-            Token::IfDef { expr, block_value } => {
+            Token::IfDef {
+                condition_block: expr,
+                block_value,
+            } => {
                 let expr_token = tokens_map.get_token(*expr).unwrap();
-                let expr_res = compute_expr(expr_token, tokens_map, scope, scope_path);
-                if RuntimeType::Bool(true) == expr_res {
+                let expr_res = evaluate_expression(expr_token, tokens_map, scope, scope_path);
+                if LenarValue::Bool(true) == expr_res {
                     let expr_body_token = tokens_map.get_token(*block_value).unwrap();
-                    compute_expr(expr_body_token, tokens_map, scope, scope_path)
+                    evaluate_expression(expr_body_token, tokens_map, scope, scope_path)
                 } else {
-                    RuntimeType::Void
+                    LenarValue::Void
                 }
             }
         }
