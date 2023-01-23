@@ -931,7 +931,7 @@ pub mod runtime {
                 arguments_block,
                 block_value,
             } => {
-                // User-defined function
+                // Anonymous function create at runtime
                 #[derive(Debug)]
                 struct Function {
                     arguments_block: usize,
@@ -944,6 +944,10 @@ pub mod runtime {
                         mut args: Vec<LenarValue<'s>>,
                         tokens_map: &'s Tokenizer,
                     ) -> LenarValue<'s> {
+                        // Anonymous functions do not inherit any scope,
+                        // instead, they only have their own global scope,
+                        // This means, you cannot reference variables from outside
+                        // this scope, you can pass them as arguments though.
                         let mut context = Scope::default();
 
                         context.setup_globals();
@@ -980,6 +984,9 @@ pub mod runtime {
             } => {
                 let expr_token = tokens_map.get_token(*expr).unwrap();
                 let expr_res = evaluate_expression(expr_token, tokens_map, scope, scope_path);
+                
+                // If the condition expression returns a `true` it 
+                // will evaluate the actual block
                 if LenarValue::Bool(true) == expr_res {
                     let expr_body_token = tokens_map.get_token(*block_value).unwrap();
                     evaluate_expression(expr_body_token, tokens_map, scope, scope_path)
