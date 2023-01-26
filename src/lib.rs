@@ -335,23 +335,6 @@ pub mod tokenizer {
                         last_action = PerfomedAction::ReferencedVariable;
 
                         continue;
-                    } else if count_unexpected_between(i, '.', code) == 0 {
-                        let attrs_path = slice_until_delimeter(&mut chars);
-                        let attrs_path = format!("{}{}", val, attrs_path);
-                        let path = attrs_path
-                            .split('.')
-                            .map(|v| v.to_string())
-                            .collect::<Vec<String>>();
-
-                        let var_ref = Token::PropertyRef { path };
-                        let var_ref_key = tokens_map.insert(var_ref);
-
-                        let current_block = tokens_map.get_mut(current_block).unwrap();
-                        current_block.add_token(var_ref_key);
-
-                        last_action = PerfomedAction::ReferencedVariable;
-
-                        continue;
                     } else {
                         let item_name = slice_until_delimeter(&mut chars);
                         let item_name = format!("{}{}", val, item_name);
