@@ -688,6 +688,68 @@ pub mod runtime {
                 }
             }
 
+            #[derive(Debug)]
+            struct IterFunc {
+                resources_files: Rc<RefCell<Slab<File>>>,
+            }
+
+            impl IterFunc {
+                pub fn new(resources_files: Rc<RefCell<Slab<File>>>) -> Self {
+                    Self { resources_files }
+                }
+            }
+
+            impl RuntimeFunction for IterFunc {
+                fn call<'s>(
+                    &mut self,
+                    mut args: Vec<LenarValue<'s>>,
+                    _tokens_map: &'s Tokenizer,
+                ) -> LenarValue<'s> {
+                    let iterator = args.remove(0);
+                    let fun = args.remove(0);
+
+                    if let LenarValue::Function(mut fun) = fun {
+                        let fun = Rc::get_mut(&mut fun).unwrap();
+                        match iterator {
+                            LenarValue::Usize(rid) => {
+                                let resources_files = self.resources_files.borrow_mut();
+                                let file = resources_files.get(rid).unwrap();
+                                let bytes = file.bytes();
+
+                                for byte in bytes {
+                                    if let Ok(byte) = byte {
+                                        fun.call(vec![LenarValue::Bytes(&[byte])], _tokens_map);
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                            LenarValue::Bytes(bytes) => {
+                                for byte in bytes {
+                                    fun.call(vec![LenarValue::Bytes(&[*byte])], _tokens_map);
+                                }
+                            }
+                            LenarValue::OwnedBytes(bytes) => {
+                                for byte in bytes {
+                                    fun.call(vec![LenarValue::Bytes(&[byte])], _tokens_map);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    LenarValue::Void
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "iter"
+                }
+            }
+
+            self.variables.insert(
+                "iter".to_string(),
+                LenarValue::Function(Rc::new(IterFunc::new(resources_files.clone()))),
+            );
             self.variables.insert(
                 "toString".to_string(),
                 LenarValue::Function(Rc::new(ToStringFunc::new(resources_files.clone()))),
@@ -967,8 +1029,8 @@ pub mod runtime {
             } => {
                 let expr_token = tokens_map.get_token(*expr).unwrap();
                 let expr_res = evaluate_expression(expr_token, tokens_map, scope, scope_path);
-                
-                // If the condition expression returns a `true` it 
+
+                // If the condition expression returns a `true` it
                 // will evaluate the actual block
                 if LenarValue::Bool(true) == expr_res {
                     let expr_body_token = tokens_map.get_token(*block_value).unwrap();
