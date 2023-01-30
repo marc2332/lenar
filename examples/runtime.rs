@@ -15,6 +15,8 @@ fn main() {
 
         println(if(isEqual("test" "test")) { "wow" });
 
+        println(isEqual("yes" "no"));
+        
         "test"
     "#;
 

@@ -148,7 +148,6 @@ pub mod tokenizer {
 
                 let (current_block, current_block_type) = *block_indexes.last().unwrap();
 
-                // TODO closing parenthesis should only close the last `arguments` block not an actual code block
                 if val == ')' && string_count == 0 {
                     block_indexes.pop();
                     last_action = PerfomedAction::ClosedStatement;
@@ -400,7 +399,7 @@ pub mod runtime {
             Self { tokenizer }
         }
 
-        /// Run the Runtime
+        /// Evaluate the runtime code and return the exit value
         pub fn evaluate(&self) -> LenarValue {
             let mut context = Scope::default();
 
@@ -504,7 +503,7 @@ pub mod runtime {
         fn get_name<'s>(&self) -> &'s str;
     }
 
-    /// A Scope context
+    /// Runtime Scope that includes variables and nested Scopes.
     #[derive(Default)]
     pub struct Scope<'a> {
         variables: HashMap<String, LenarValue<'a>>,
@@ -616,6 +615,9 @@ pub mod runtime {
                         }
                         LenarValue::Instance(instance) => {
                             stdout().write(instance.get_name().as_bytes()).ok();
+                        }
+                        LenarValue::Bool(b) => {
+                            stdout().write(b.to_string().as_bytes()).ok();
                         }
                         _ => {}
                     }
