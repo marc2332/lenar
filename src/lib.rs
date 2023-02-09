@@ -619,6 +619,9 @@ pub mod runtime {
                         LenarValue::Bool(b) => {
                             stdout().write(b.to_string().as_bytes()).ok();
                         }
+                        LenarValue::Usize(n) => {
+                            stdout().write(n.to_string().as_bytes()).ok();
+                        }
                         _ => {}
                     }
                 }
@@ -686,7 +689,25 @@ pub mod runtime {
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
-                    "IsEqual"
+                    "isEqual"
+                }
+            }
+
+            // NewList()
+            #[derive(Debug)]
+            struct NewList;
+
+            impl RuntimeFunction for NewList {
+                fn call<'s>(
+                    &mut self,
+                    args: Vec<LenarValue<'s>>,
+                    _tokens_map: &'s Tokenizer,
+                ) -> LenarValue<'s> {
+                    LenarValue::List(args)
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "newList"
                 }
             }
 
@@ -736,6 +757,11 @@ pub mod runtime {
                                     fun.call(vec![LenarValue::Bytes(&[byte])], _tokens_map);
                                 }
                             }
+                            LenarValue::List(items) => {
+                                for (i, item) in items.into_iter().enumerate() {
+                                    fun.call(vec![item, LenarValue::Usize(i)], _tokens_map);
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -748,6 +774,10 @@ pub mod runtime {
                 }
             }
 
+            self.variables.insert(
+                "newList".to_string(),
+                LenarValue::Function(Rc::new(NewList)),
+            );
             self.variables.insert(
                 "iter".to_string(),
                 LenarValue::Function(Rc::new(IterFunc::new(resources_files.clone()))),
@@ -1005,8 +1035,10 @@ pub mod runtime {
                             for token in tokens {
                                 let arg_token = tokens_map.get_token(*token).unwrap();
                                 if let Token::VarRef { var_name } = arg_token {
-                                    let arg_value = args.remove(0);
-                                    context.variables.insert(var_name.to_owned(), arg_value);
+                                    if args.len() > 0 {
+                                        let arg_value = args.remove(0);
+                                        context.variables.insert(var_name.to_owned(), arg_value);
+                                    }
                                 }
                             }
                         }
