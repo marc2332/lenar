@@ -256,7 +256,7 @@ pub mod tokenizer {
                     // Functions
                     if count_unexpected_between(i, '(', code) == 0 {
                         let item_name = slice_until('(', &mut chars);
-                        let item_name = format!("{}{}", val, item_name);
+                        let item_name = format!("{val}{item_name}");
 
                         if item_name == "if" {
                             let expr_block = Token::Block { tokens: Vec::new() };
@@ -319,7 +319,7 @@ pub mod tokenizer {
                         continue;
                     } else if count_unexpected_between(i, '.', code) == 0 {
                         let attrs_path = slice_until_delimeter(&mut chars);
-                        let attrs_path = format!("{}{}", val, attrs_path);
+                        let attrs_path = format!("{val}{attrs_path}");
                         let path = attrs_path
                             .split('.')
                             .map(|v| v.to_string())
@@ -336,7 +336,7 @@ pub mod tokenizer {
                         continue;
                     } else {
                         let item_name = slice_until_delimeter(&mut chars);
-                        let item_name = format!("{}{}", val, item_name);
+                        let item_name = format!("{val}{item_name}");
 
                         let var_ref = Token::VarRef {
                             var_name: item_name,
@@ -602,7 +602,7 @@ pub mod runtime {
             struct PrintFunc;
 
             impl PrintFunc {
-                pub fn write<'s>(&self, value: &LenarValue<'s>) {
+                pub fn write(&self, value: &LenarValue) {
                     match value {
                         LenarValue::OwnedBytes(bts) => {
                             stdout().write(bts).ok();
@@ -1035,10 +1035,8 @@ pub mod runtime {
                             for token in tokens {
                                 let arg_token = tokens_map.get_token(*token).unwrap();
                                 if let Token::VarRef { var_name } = arg_token {
-                                    if args.len() > 0 {
-                                        let arg_value = args.remove(0);
-                                        context.variables.insert(var_name.to_owned(), arg_value);
-                                    }
+                                    let arg_value = args.remove(0);
+                                    context.variables.insert(var_name.to_owned(), arg_value);
                                 }
                             }
                         }
