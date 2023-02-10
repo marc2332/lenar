@@ -117,6 +117,20 @@ pub mod tokenizer {
             let global_block_token = Token::Block { tokens: Vec::new() };
             let global_block = tokens_map.insert(global_block_token);
 
+            let mut tokenizer = Self {
+                tokens: tokens_map,
+                global_block,
+            };
+
+            tokenizer.parse(code);
+
+            tokenizer
+        }
+
+        pub fn parse(&mut self, code: &str) {
+            let tokens_map = &mut self.tokens;
+            let global_block = self.global_block;
+
             let mut block_indexes = vec![(global_block, BlockType::Generic)];
             let mut string_count = 0;
             let mut last_action = PerfomedAction::EnteredGlobalScope;
@@ -265,14 +279,14 @@ pub mod tokenizer {
                             let value_block = Token::Block { tokens: Vec::new() };
                             let block_key = tokens_map.insert(value_block);
 
-                            let var_def = Token::IfDef {
+                            let if_def = Token::IfDef {
                                 block_value: block_key,
                                 condition_block: expr_block_key,
                             };
-                            let var_key = tokens_map.insert(var_def);
+                            let if_key = tokens_map.insert(if_def);
 
                             let current_block = tokens_map.get_mut(current_block).unwrap();
-                            current_block.add_token(var_key);
+                            current_block.add_token(if_key);
 
                             block_indexes.push((block_key, BlockType::FuncValue));
                             block_indexes.push((expr_block_key, BlockType::FuncCall));
@@ -285,14 +299,14 @@ pub mod tokenizer {
                             let value_block = Token::Block { tokens: Vec::new() };
                             let block_key = tokens_map.insert(value_block);
 
-                            let var_def = Token::FnDef {
+                            let fn_def = Token::FnDef {
                                 block_value: block_key,
                                 arguments_block: args_block_key,
                             };
-                            let var_key = tokens_map.insert(var_def);
+                            let fn_key = tokens_map.insert(fn_def);
 
                             let current_block = tokens_map.get_mut(current_block).unwrap();
-                            current_block.add_token(var_key);
+                            current_block.add_token(fn_key);
 
                             block_indexes.push((block_key, BlockType::FuncValue));
                             block_indexes.push((args_block_key, BlockType::FuncCall));
@@ -302,14 +316,14 @@ pub mod tokenizer {
                             let value_block = Token::Block { tokens: Vec::new() };
                             let block_key = tokens_map.insert(value_block);
 
-                            let fn_def = Token::FunctionCall {
+                            let fn_call_def = Token::FunctionCall {
                                 fn_name: item_name,
                                 arguments: block_key,
                             };
-                            let fn_key = tokens_map.insert(fn_def);
+                            let fn_call_key = tokens_map.insert(fn_call_def);
 
                             let current_block = tokens_map.get_mut(current_block).unwrap();
-                            current_block.add_token(fn_key);
+                            current_block.add_token(fn_call_key);
 
                             block_indexes.push((block_key, BlockType::FuncCall));
 
@@ -352,11 +366,6 @@ pub mod tokenizer {
                     }
                 }
             }
-
-            Self {
-                tokens: tokens_map,
-                global_block,
-            }
         }
 
         /// Retrieve the global block token
@@ -390,27 +399,17 @@ pub mod runtime {
     use crate::tokenizer::{Token, Tokenizer};
 
     /// A interpreter given a Tokenizer
-    pub struct Runtime {
-        tokenizer: Tokenizer,
-    }
+    pub struct Runtime;
 
     impl Runtime {
-        pub fn new(tokenizer: Tokenizer) -> Self {
-            Self { tokenizer }
-        }
-
         /// Evaluate the runtime code and return the exit value
-        pub fn evaluate(&self) -> LenarValue {
+        pub fn evaluate(tokenizer: &Tokenizer) -> LenarValue {
             let mut context = Scope::default();
-
             context.setup_globals();
 
-            let global_token = self.tokenizer.get_global();
-            let global_block = self.tokenizer.get_token(global_token);
+            let global_block = tokenizer.get_token(tokenizer.get_global()).unwrap();
 
-            let tok = global_block.unwrap();
-
-            evaluate_expression(tok, &self.tokenizer, &mut context, &[])
+            evaluate_expression(global_block, tokenizer, &mut context, &[])
         }
     }
 

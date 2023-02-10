@@ -22,9 +22,7 @@ fn main() {
 
     let tokenizer = Tokenizer::new(&code);
 
-    let runtime = Runtime::new(tokenizer);
+    let res = Runtime::evaluate(&tokenizer);
 
-    let res = runtime.evaluate().to_string();
-
-    assert_eq!(res, "test");
+    assert_eq!(res, LenarValue::Bytes("test".as_bytes()));
 }

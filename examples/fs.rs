@@ -20,7 +20,5 @@ fn main() {
 
     let tokenizer = Tokenizer::new(&code);
 
-    let runtime = Runtime::new(tokenizer);
-
-    runtime.evaluate();
+    Runtime::evaluate(&tokenizer);
 }
