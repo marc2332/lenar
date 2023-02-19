@@ -14,11 +14,11 @@ fn main() {
 
     Runtime::evaluate(&tokenizer);
 
-    tokenizer.parse(
-        r#"
+    let code = r#"
         hey("marc");
-    "#,
-    );
+    "#;
+
+    tokenizer.parse(code);
 
     Runtime::evaluate(&tokenizer);
 }
