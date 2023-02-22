@@ -610,7 +610,7 @@ pub mod runtime {
             struct PrintFunc;
 
             impl PrintFunc {
-                pub fn write(&self, value: &LenarValue) {
+                pub fn write(value: &LenarValue) {
                     match value {
                         LenarValue::OwnedBytes(bts) => {
                             stdout().write(bts).ok();
@@ -630,7 +630,15 @@ pub mod runtime {
                         LenarValue::Usize(n) => {
                             stdout().write(n.to_string().as_bytes()).ok();
                         }
-                        _ => {}
+                        LenarValue::Str(s) => {
+                            stdout().write(s.as_bytes()).ok();
+                        }
+                        LenarValue::List(l) => {
+                            l.iter().for_each(|l| Self::write(l));
+                        }
+                        LenarValue::Void => {
+                            stdout().write("Void".as_bytes()).ok();
+                        }
                     }
                 }
             }
@@ -642,7 +650,7 @@ pub mod runtime {
                     _tokens_map: &'s Arc<Tokenizer>,
                 ) -> LenarValue<'s> {
                     for val in args {
-                        self.write(&val);
+                        Self::write(&val);
                     }
                     stdout().flush().ok();
                     LenarValue::Void
@@ -663,9 +671,8 @@ pub mod runtime {
                     args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
                 ) -> LenarValue<'s> {
-                    let printer = PrintFunc;
                     for val in args {
-                        printer.write(&val);
+                        PrintFunc::write(&val);
                     }
                     stdout().write("\n".as_bytes()).ok();
                     stdout().flush().ok();
@@ -703,9 +710,9 @@ pub mod runtime {
 
             // NewList()
             #[derive(Debug)]
-            struct NewList;
+            struct NewListFunc;
 
-            impl RuntimeFunction for NewList {
+            impl RuntimeFunction for NewListFunc {
                 fn call<'s>(
                     &mut self,
                     args: Vec<LenarValue<'s>>,
@@ -783,14 +790,11 @@ pub mod runtime {
                 }
             }
 
-            #[derive(Debug, Clone)]
-            struct ParallelThreadThread {}
-
             // thread()
             #[derive(Debug)]
-            struct ParallelThread;
+            struct ThreadFunc;
 
-            impl RuntimeFunction for ParallelThread {
+            impl RuntimeFunction for ThreadFunc {
                 fn call<'s>(
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
@@ -813,9 +817,9 @@ pub mod runtime {
 
             // sleep()
             #[derive(Debug)]
-            struct Sleep;
+            struct SleepFunc;
 
-            impl RuntimeFunction for Sleep {
+            impl RuntimeFunction for SleepFunc {
                 fn call<'s>(
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
@@ -837,15 +841,15 @@ pub mod runtime {
 
             // wait()
             #[derive(Debug)]
-            struct Wait(Arc<Mutex<Slab<JoinHandle<()>>>>);
+            struct WaitFunc(Arc<Mutex<Slab<JoinHandle<()>>>>);
 
-            impl Wait {
+            impl WaitFunc {
                 pub fn new(locks: Arc<Mutex<Slab<JoinHandle<()>>>>) -> Self {
                     Self(locks)
                 }
             }
 
-            impl RuntimeFunction for Wait {
+            impl RuntimeFunction for WaitFunc {
                 fn call<'s>(
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
@@ -866,17 +870,19 @@ pub mod runtime {
 
             self.variables.insert(
                 "wait".to_string(),
-                LenarValue::Function(Rc::new(Wait::new(self.locks.clone()))),
+                LenarValue::Function(Rc::new(WaitFunc::new(self.locks.clone()))),
             );
-            self.variables
-                .insert("sleep".to_string(), LenarValue::Function(Rc::new(Sleep)));
+            self.variables.insert(
+                "sleep".to_string(),
+                LenarValue::Function(Rc::new(SleepFunc)),
+            );
             self.variables.insert(
                 "thread".to_string(),
-                LenarValue::Function(Rc::new(ParallelThread)),
+                LenarValue::Function(Rc::new(ThreadFunc)),
             );
             self.variables.insert(
                 "newList".to_string(),
-                LenarValue::Function(Rc::new(NewList)),
+                LenarValue::Function(Rc::new(NewListFunc)),
             );
             self.variables.insert(
                 "iter".to_string(),
