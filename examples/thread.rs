@@ -1,10 +1,7 @@
-use std::sync::Arc;
-
 use lenar::*;
 
 fn main() {
     use runtime::*;
-    use tokenizer::*;
 
     let code = r#"
         thread(
@@ -25,7 +22,5 @@ fn main() {
         println("Finished!");
     "#;
 
-    let tokenizer = Arc::new(Tokenizer::new(&code));
-
-    Runtime::evaluate(&tokenizer);
+    Runtime::run(&code);
 }

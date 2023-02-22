@@ -414,6 +414,11 @@ pub mod runtime {
 
             evaluate_expression(global_block, tokenizer, &mut context, &[])
         }
+
+        pub fn run(code: &str) {
+            let tokenizer = Arc::new(Tokenizer::new(&code));
+            Self::evaluate(&tokenizer);
+        }
     }
 
     /// Runtime values
