@@ -4,20 +4,16 @@ fn main() {
     use runtime::*;
 
     let code = r#"
-        thread(
-            fn(arg0) {
-                println(arg0);
-                let list = newList("0" "0" "0" "0" "0");
-
-                iter(list fn(n i){
-                    println(i);
-                    sleep("1000");
-                });
+        let handle = thread(
+            fn(callback someOtherVal) {
+                callback(someOtherVal);
+                sleep("500");
             } 
-            "Pass a value to the thread!"
+            fn(v) { println(v); sleep("1000") }
+            "Some other val"
         );
         
-        sleep("5000");
+        wait(handle);
 
         println("Finished!");
     "#;

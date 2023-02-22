@@ -388,8 +388,8 @@ pub mod runtime {
     use std::fs::File;
     use std::io::Read;
     use std::str::from_utf8;
-    use std::sync::Arc;
-    use std::thread;
+    use std::sync::{Arc, Mutex};
+    use std::thread::{self, JoinHandle};
     use std::time::Duration;
     use std::{
         collections::HashMap,
@@ -416,7 +416,7 @@ pub mod runtime {
         }
 
         pub fn run(code: &str) {
-            let tokenizer = Arc::new(Tokenizer::new(&code));
+            let tokenizer = Arc::new(Tokenizer::new(code));
             Self::evaluate(&tokenizer);
         }
     }
@@ -513,6 +513,7 @@ pub mod runtime {
     /// Runtime Scope that includes variables and nested Scopes.
     #[derive(Default)]
     pub struct Scope<'a> {
+        locks: Arc<Mutex<Slab<JoinHandle<()>>>>,
         variables: HashMap<String, LenarValue<'a>>,
         scopes: HashMap<usize, Scope<'a>>,
     }
@@ -834,6 +835,39 @@ pub mod runtime {
                 }
             }
 
+            // wait()
+            #[derive(Debug)]
+            struct Wait(Arc<Mutex<Slab<JoinHandle<()>>>>);
+
+            impl Wait {
+                pub fn new(locks: Arc<Mutex<Slab<JoinHandle<()>>>>) -> Self {
+                    Self(locks)
+                }
+            }
+
+            impl RuntimeFunction for Wait {
+                fn call<'s>(
+                    &mut self,
+                    mut args: Vec<LenarValue<'s>>,
+                    _tokens_map: &'s Arc<Tokenizer>,
+                ) -> LenarValue<'s> {
+                    let v = args.remove(0);
+                    if let LenarValue::Usize(rid) = v {
+                        let handle = self.0.lock().unwrap().remove(rid);
+                        handle.join().unwrap();
+                    }
+                    LenarValue::Void
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "wait"
+                }
+            }
+
+            self.variables.insert(
+                "wait".to_string(),
+                LenarValue::Function(Rc::new(Wait::new(self.locks.clone()))),
+            );
             self.variables
                 .insert("sleep".to_string(), LenarValue::Function(Rc::new(Sleep)));
             self.variables.insert(
@@ -1058,7 +1092,7 @@ pub mod runtime {
                     let arguments = *arguments;
                     let fn_name = fn_name.clone();
 
-                    thread::spawn(move || {
+                    let handle = thread::spawn(move || {
                         let mut context = Scope::default();
 
                         context.setup_globals();
@@ -1075,7 +1109,8 @@ pub mod runtime {
 
                         context.call_function(fn_name, &mut [].iter(), args, &tokens_map);
                     });
-                    LenarValue::Void
+                    let id = scope.locks.lock().unwrap().insert(handle);
+                    LenarValue::Usize(id)
                 } else {
                     let value = tokens_map.get_token(*arguments).unwrap();
                     let mut args = Vec::new();
