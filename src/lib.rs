@@ -6,13 +6,13 @@ pub mod tokenizer {
     pub type TokenKey = usize;
 
     /// `Tokenizer` transforms an input, e.g a string, into a a Tokens map
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct Tokenizer {
         tokens: Slab<Token>,
         global_block: TokenKey,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub enum Token {
         Block {
             tokens: Vec<TokenKey>,
@@ -388,6 +388,9 @@ pub mod runtime {
     use std::fs::File;
     use std::io::Read;
     use std::str::from_utf8;
+    use std::sync::{Arc, Mutex};
+    use std::thread::{self, JoinHandle};
+    use std::time::Duration;
     use std::{
         collections::HashMap,
         io::{stdout, Write},
@@ -403,13 +406,18 @@ pub mod runtime {
 
     impl Runtime {
         /// Evaluate the runtime code and return the exit value
-        pub fn evaluate(tokenizer: &Tokenizer) -> LenarValue {
+        pub fn evaluate(tokenizer: &Arc<Tokenizer>) -> LenarValue {
             let mut context = Scope::default();
             context.setup_globals();
 
             let global_block = tokenizer.get_token(tokenizer.get_global()).unwrap();
 
             evaluate_expression(global_block, tokenizer, &mut context, &[])
+        }
+
+        pub fn run(code: &str) {
+            let tokenizer = Arc::new(Tokenizer::new(code));
+            Self::evaluate(&tokenizer);
         }
     }
 
@@ -496,7 +504,7 @@ pub mod runtime {
         fn call<'s>(
             &mut self,
             _args: Vec<LenarValue<'s>>,
-            tokens_map: &'s Tokenizer,
+            tokens_map: &'s Arc<Tokenizer>,
         ) -> LenarValue<'s>;
 
         fn get_name<'s>(&self) -> &'s str;
@@ -505,6 +513,7 @@ pub mod runtime {
     /// Runtime Scope that includes variables and nested Scopes.
     #[derive(Default)]
     pub struct Scope<'a> {
+        locks: Arc<Mutex<Slab<JoinHandle<()>>>>,
         variables: HashMap<String, LenarValue<'a>>,
         scopes: HashMap<usize, Scope<'a>>,
     }
@@ -529,7 +538,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Tokenizer,
+                    _tokens_map: &'s Arc<Tokenizer>,
                 ) -> LenarValue<'s> {
                     match args[0] {
                         LenarValue::Usize(rid) => {
@@ -563,7 +572,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Tokenizer,
+                    _tokens_map: &'s Arc<Tokenizer>,
                 ) -> LenarValue<'s> {
                     let file_path = args[0].as_bytes().unwrap();
                     let file_path = from_utf8(file_path).unwrap();
@@ -630,7 +639,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Tokenizer,
+                    _tokens_map: &'s Arc<Tokenizer>,
                 ) -> LenarValue<'s> {
                     for val in args {
                         self.write(&val);
@@ -652,7 +661,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Tokenizer,
+                    _tokens_map: &'s Arc<Tokenizer>,
                 ) -> LenarValue<'s> {
                     let printer = PrintFunc;
                     for val in args {
@@ -676,7 +685,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Tokenizer,
+                    _tokens_map: &'s Arc<Tokenizer>,
                 ) -> LenarValue<'s> {
                     let args = args.get(0).zip(args.get(1));
                     let res = if let Some((a, b)) = args {
@@ -700,7 +709,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Tokenizer,
+                    _tokens_map: &'s Arc<Tokenizer>,
                 ) -> LenarValue<'s> {
                     LenarValue::List(args)
                 }
@@ -710,6 +719,7 @@ pub mod runtime {
                 }
             }
 
+            // iter()
             #[derive(Debug)]
             struct IterFunc {
                 resources_files: Rc<RefCell<Slab<File>>>,
@@ -725,7 +735,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Tokenizer,
+                    _tokens_map: &'s Arc<Tokenizer>,
                 ) -> LenarValue<'s> {
                     let iterator = args.remove(0);
                     let fun = args.remove(0);
@@ -773,6 +783,97 @@ pub mod runtime {
                 }
             }
 
+            #[derive(Debug, Clone)]
+            struct ParallelThreadThread {}
+
+            // thread()
+            #[derive(Debug)]
+            struct ParallelThread;
+
+            impl RuntimeFunction for ParallelThread {
+                fn call<'s>(
+                    &mut self,
+                    mut args: Vec<LenarValue<'s>>,
+                    tokens_map: &'s Arc<Tokenizer>,
+                ) -> LenarValue<'s> {
+                    let fun = args.remove(0);
+
+                    if let LenarValue::Function(mut fun) = fun {
+                        let fun = Rc::get_mut(&mut fun).unwrap();
+                        fun.call(args, tokens_map);
+                    }
+
+                    LenarValue::Void
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "thread"
+                }
+            }
+
+            // sleep()
+            #[derive(Debug)]
+            struct Sleep;
+
+            impl RuntimeFunction for Sleep {
+                fn call<'s>(
+                    &mut self,
+                    mut args: Vec<LenarValue<'s>>,
+                    _tokens_map: &'s Arc<Tokenizer>,
+                ) -> LenarValue<'s> {
+                    let v = args.remove(0);
+                    if let LenarValue::Bytes(b) = v {
+                        let n = from_utf8(b).unwrap();
+                        let n = n.parse::<u64>().unwrap();
+                        thread::sleep(Duration::from_millis(n));
+                    }
+                    LenarValue::Void
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "sleep"
+                }
+            }
+
+            // wait()
+            #[derive(Debug)]
+            struct Wait(Arc<Mutex<Slab<JoinHandle<()>>>>);
+
+            impl Wait {
+                pub fn new(locks: Arc<Mutex<Slab<JoinHandle<()>>>>) -> Self {
+                    Self(locks)
+                }
+            }
+
+            impl RuntimeFunction for Wait {
+                fn call<'s>(
+                    &mut self,
+                    mut args: Vec<LenarValue<'s>>,
+                    _tokens_map: &'s Arc<Tokenizer>,
+                ) -> LenarValue<'s> {
+                    let v = args.remove(0);
+                    if let LenarValue::Usize(rid) = v {
+                        let handle = self.0.lock().unwrap().remove(rid);
+                        handle.join().unwrap();
+                    }
+                    LenarValue::Void
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "wait"
+                }
+            }
+
+            self.variables.insert(
+                "wait".to_string(),
+                LenarValue::Function(Rc::new(Wait::new(self.locks.clone()))),
+            );
+            self.variables
+                .insert("sleep".to_string(), LenarValue::Function(Rc::new(Sleep)));
+            self.variables.insert(
+                "thread".to_string(),
+                LenarValue::Function(Rc::new(ParallelThread)),
+            );
             self.variables.insert(
                 "newList".to_string(),
                 LenarValue::Function(Rc::new(NewList)),
@@ -848,7 +949,7 @@ pub mod runtime {
             name: impl AsRef<str>,
             path: &mut Iter<usize>,
             args: Vec<LenarValue<'a>>,
-            tokens_map: &'a Tokenizer,
+            tokens_map: &'a Arc<Tokenizer>,
         ) -> LenarValue<'a> {
             let func = self.get_function(name, path);
 
@@ -939,7 +1040,7 @@ pub mod runtime {
     /// Evaluate an expression to a value
     fn evaluate_expression<'a>(
         token: &'a Token,
-        tokens_map: &'a Tokenizer,
+        tokens_map: &'a Arc<Tokenizer>,
         scope: &mut Scope<'a>,
         scope_path: &[usize],
     ) -> LenarValue<'a> {
@@ -986,18 +1087,44 @@ pub mod runtime {
                 LenarValue::Void
             }
             Token::FunctionCall { arguments, fn_name } => {
-                let value = tokens_map.get_token(*arguments).unwrap();
-                let mut args = Vec::new();
-                if let Token::Block { tokens } = value {
-                    for tok in tokens {
-                        let tok = tokens_map.get_token(*tok).unwrap();
-                        let res = evaluate_expression(tok, tokens_map, scope, scope_path);
+                if fn_name == "thread" {
+                    let tokens_map = tokens_map.clone();
+                    let arguments = *arguments;
+                    let fn_name = fn_name.clone();
 
-                        args.push(res);
+                    let handle = thread::spawn(move || {
+                        let mut context = Scope::default();
+
+                        context.setup_globals();
+                        let value = tokens_map.get_token(arguments).unwrap();
+                        let mut args = Vec::new();
+                        if let Token::Block { tokens } = value {
+                            for tok in tokens {
+                                let tok = tokens_map.get_token(*tok).unwrap();
+                                let res = evaluate_expression(tok, &tokens_map, &mut context, &[]);
+
+                                args.push(res);
+                            }
+                        }
+
+                        context.call_function(fn_name, &mut [].iter(), args, &tokens_map);
+                    });
+                    let id = scope.locks.lock().unwrap().insert(handle);
+                    LenarValue::Usize(id)
+                } else {
+                    let value = tokens_map.get_token(*arguments).unwrap();
+                    let mut args = Vec::new();
+                    if let Token::Block { tokens } = value {
+                        for tok in tokens {
+                            let tok = tokens_map.get_token(*tok).unwrap();
+                            let res = evaluate_expression(tok, tokens_map, scope, scope_path);
+
+                            args.push(res);
+                        }
                     }
-                }
 
-                scope.call_function(fn_name, &mut scope_path.iter(), args, tokens_map)
+                    scope.call_function(fn_name, &mut scope_path.iter(), args, tokens_map)
+                }
             }
             Token::StringVal { value } => LenarValue::Str(value),
             Token::BytesVal { value } => LenarValue::Bytes(value),
@@ -1018,7 +1145,7 @@ pub mod runtime {
                     fn call<'s>(
                         &mut self,
                         mut args: Vec<LenarValue<'s>>,
-                        tokens_map: &'s Tokenizer,
+                        tokens_map: &'s Arc<Tokenizer>,
                     ) -> LenarValue<'s> {
                         // Anonymous functions do not inherit any scope,
                         // instead, they only have their own global scope,

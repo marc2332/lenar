@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use lenar::*;
 
 fn main() {
@@ -18,7 +20,7 @@ fn main() {
         });
     "#;
 
-    let tokenizer = Tokenizer::new(&code);
+    let tokenizer = Arc::new(Tokenizer::new(&code));
 
     Runtime::evaluate(&tokenizer);
 }

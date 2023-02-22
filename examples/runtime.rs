@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use lenar::*;
 
 fn main() {
@@ -16,11 +18,17 @@ fn main() {
         println(if(isEqual("test" "test")) { "wow" });
 
         println(isEqual("yes" "no"));
+
+        let locker = parallel(shared fn() {
+            pritnln("test");
+        });
+
+        wait(locker);
         
         "test"
     "#;
 
-    let tokenizer = Tokenizer::new(&code);
+    let tokenizer = Arc::new(Tokenizer::new(&code));
 
     let res = Runtime::evaluate(&tokenizer);
 

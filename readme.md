@@ -15,5 +15,6 @@ println(if(isEqual("test" "test")) { "wow" });
 - Incredibly fast handcrafted parser
 - Minimal dependencies
 - Easy to embed
+- Lightweight
 
 [MIT License](./LICENSE.md)
