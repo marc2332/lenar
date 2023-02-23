@@ -1,5 +1,5 @@
 pub mod tokenizer {
-    use std::{iter::Peekable, str::Chars};
+    use std::{iter::Peekable, str::Chars, sync::Arc};
 
     pub use slab::Slab;
 
@@ -125,6 +125,10 @@ pub mod tokenizer {
             tokenizer.parse(code);
 
             tokenizer
+        }
+
+        pub fn wrap(self) -> Arc<Self> {
+            Arc::new(self)
         }
 
         pub fn parse(&mut self, code: &str) {
@@ -405,14 +409,20 @@ pub mod runtime {
     pub struct Runtime;
 
     impl Runtime {
+        pub fn run_with_scope<'a>(
+            context: &mut Scope<'a>,
+            tokenizer: &'a Arc<Tokenizer>,
+        ) -> LenarValue<'a> {
+            let global_block = tokenizer.get_token(tokenizer.get_global()).unwrap();
+            evaluate_expression(global_block, tokenizer, context, &[])
+        }
+
         /// Evaluate the runtime code and return the exit value
         pub fn evaluate(tokenizer: &Arc<Tokenizer>) -> LenarValue {
             let mut context = Scope::default();
             context.setup_globals();
 
-            let global_block = tokenizer.get_token(tokenizer.get_global()).unwrap();
-
-            evaluate_expression(global_block, tokenizer, &mut context, &[])
+            Self::run_with_scope(&mut context, tokenizer)
         }
 
         pub fn run(code: &str) {
@@ -519,6 +529,22 @@ pub mod runtime {
     }
 
     impl<'a> Scope<'a> {
+        /// Add an instance to the global scope
+        pub fn add_global_instance(&mut self, val: impl RuntimeInstance<'a> + 'static) {
+            self.variables.insert(
+                val.get_name().to_owned(),
+                LenarValue::Instance(Rc::new(val)),
+            );
+        }
+
+        /// Add a function to the global scope
+        pub fn add_global_function(&mut self, val: impl RuntimeFunction + 'static) {
+            self.variables.insert(
+                val.get_name().to_owned(),
+                LenarValue::Function(Rc::new(val)),
+            );
+        }
+
         /// Define global utilities
         pub fn setup_globals(&mut self) {
             let resources_files = Rc::new(RefCell::new(Slab::<File>::new()));
@@ -634,7 +660,7 @@ pub mod runtime {
                             stdout().write(s.as_bytes()).ok();
                         }
                         LenarValue::List(l) => {
-                            l.iter().for_each(|l| Self::write(l));
+                            l.iter().for_each(Self::write);
                         }
                         LenarValue::Void => {
                             stdout().write("Void".as_bytes()).ok();
