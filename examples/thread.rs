@@ -7,10 +7,14 @@ fn main() {
         let handle = thread(
             fn(callback someOtherVal) {
                 callback(someOtherVal);
-                sleep("500");
+                println("waiting 500ms");
+                sleep(500);
             } 
-            fn(v) { println(v); sleep("1000") }
-            "Some other val"
+            fn(v) { 
+                println(v); 
+                sleep(1000); 
+            }
+            "waiting 1000ms"
         );
         
         wait(handle);
