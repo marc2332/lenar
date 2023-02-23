@@ -529,6 +529,15 @@ pub mod runtime {
     }
 
     impl<'a> Scope<'a> {
+        /// Add an instance to the global scope
+        pub fn add_global_instance(&mut self, val: impl RuntimeInstance<'a> + 'static) {
+            self.variables.insert(
+                val.get_name().to_owned(),
+                LenarValue::Instance(Rc::new(val)),
+            );
+        }
+
+        /// Add a function to the global scope
         pub fn add_global_function(&mut self, val: impl RuntimeFunction + 'static) {
             self.variables.insert(
                 val.get_name().to_owned(),
@@ -651,7 +660,7 @@ pub mod runtime {
                             stdout().write(s.as_bytes()).ok();
                         }
                         LenarValue::List(l) => {
-                            l.iter().for_each(|l| Self::write(l));
+                            l.iter().for_each(Self::write);
                         }
                         LenarValue::Void => {
                             stdout().write("Void".as_bytes()).ok();

@@ -7,7 +7,7 @@ fn main() {
     use tokenizer::*;
 
     let code = r#"
-        test("hey");
+        coolFunc(coolInstance.hey);
     "#;
 
     let tokenizer = Tokenizer::new(&code).wrap();
@@ -16,9 +16,26 @@ fn main() {
     scope.setup_globals();
 
     #[derive(Debug)]
-    struct Test;
+    struct CoolInstance;
 
-    impl RuntimeFunction for Test {
+    impl<'a> RuntimeInstance<'a> for CoolInstance {
+        fn get_prop(&self, prop: &str) -> LenarValue<'a> {
+            if prop == "hey" {
+                LenarValue::Bytes("hey".as_bytes())
+            } else {
+                LenarValue::Void
+            }
+        }
+
+        fn get_name<'s>(&self) -> &'s str {
+            "coolInstance"
+        }
+    }
+
+    #[derive(Debug)]
+    struct CoolFunc;
+
+    impl RuntimeFunction for CoolFunc {
         fn call<'s>(
             &mut self,
             mut args: Vec<LenarValue<'s>>,
@@ -31,11 +48,12 @@ fn main() {
         }
 
         fn get_name<'s>(&self) -> &'s str {
-            "test"
+            "coolFunc"
         }
     }
 
-    scope.add_global_function(Test);
+    scope.add_global_function(CoolFunc);
+    scope.add_global_instance(CoolInstance);
 
     Runtime::run_with_scope(&mut scope, &tokenizer);
 }
