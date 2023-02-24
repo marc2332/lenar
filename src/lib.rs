@@ -29,6 +29,9 @@ pub mod tokenizer {
             condition_block: TokenKey,
             block_value: TokenKey,
         },
+        NumberVal {
+            value: usize,
+        },
         StringVal {
             value: String,
         },
@@ -100,6 +103,7 @@ pub mod tokenizer {
         FoundOperator(char),
         CalledFunction,
         ReferencedVariable,
+        FoundNumber,
     }
 
     #[derive(Clone, Copy, PartialEq)]
@@ -350,6 +354,22 @@ pub mod tokenizer {
                         current_block.add_token(var_ref_key);
 
                         last_action = PerfomedAction::ReferencedVariable;
+
+                        continue;
+                    } else if val.is_ascii_digit() {
+                        let item_val = slice_until_delimeter(&mut chars);
+                        let item_val = format!("{val}{item_val}");
+
+                        if let Ok(value) = item_val.parse::<usize>() {
+                            let number_val = Token::NumberVal { value };
+
+                            let number_val_key = tokens_map.insert(number_val);
+
+                            let current_block = tokens_map.get_mut(current_block).unwrap();
+                            current_block.add_token(number_val_key);
+
+                            last_action = PerfomedAction::FoundNumber;
+                        }
 
                         continue;
                     } else {
@@ -852,10 +872,8 @@ pub mod runtime {
                     _tokens_map: &'s Arc<Tokenizer>,
                 ) -> LenarValue<'s> {
                     let v = args.remove(0);
-                    if let LenarValue::Bytes(b) = v {
-                        let n = from_utf8(b).unwrap();
-                        let n = n.parse::<u64>().unwrap();
-                        thread::sleep(Duration::from_millis(n));
+                    if let LenarValue::Usize(time) = v {
+                        thread::sleep(Duration::from_millis(time as u64));
                     }
                     LenarValue::Void
                 }
@@ -1229,6 +1247,7 @@ pub mod runtime {
                     LenarValue::Void
                 }
             }
+            Token::NumberVal { value } => LenarValue::Usize(*value),
         }
     }
 }

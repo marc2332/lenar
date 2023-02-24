@@ -13,7 +13,7 @@ fn main() {
             print(byte);
         });
 
-        let list = newList("51" "19" "8" "14");
+        let list = newList(15 19 8 14);
 
         iter(list fn(number index){
             println(index "-" number)
