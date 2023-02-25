@@ -463,6 +463,39 @@ pub mod runtime {
         Bool(bool),
         Instance(Rc<dyn RuntimeInstance<'a>>),
         Function(Rc<dyn RuntimeFunction>),
+        Enum(LenarEnum<'a>),
+    }
+
+    #[derive(Debug, Clone, Default)]
+    pub struct LenarEnum<'a>(HashMap<&'a str, LenarValue<'a>>);
+
+    impl<'a> LenarEnum<'a> {
+        pub fn new_with_variant(variant_name: &'a str, variant_value: LenarValue<'a>) -> Self {
+            let mut en = LenarEnum::default();
+            en.0.insert(variant_name, variant_value);
+            en
+        }
+
+        pub fn peek_variant(&self, variant_name: &str) -> Option<&LenarValue<'a>> {
+            self.0.get(variant_name)
+        }
+
+        pub fn get_variant(mut self, variant_name: &str) -> Option<LenarValue<'a>> {
+            self.0.remove(variant_name)
+        }
+    }
+
+    impl Display for LenarEnum<'_> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(
+                &self
+                    .0
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {v}"))
+                    .collect::<Vec<String>>()
+                    .join("\n"),
+            )
+        }
     }
 
     impl Display for LenarValue<'_> {
@@ -480,6 +513,7 @@ pub mod runtime {
                 LenarValue::Bool(b) => f.write_str(&format!("{b}")),
                 LenarValue::Instance(i) => f.write_str(i.get_name()),
                 LenarValue::Function(func) => f.write_str(func.get_name()),
+                LenarValue::Enum(en) => f.write_str(&en.to_string()),
             }
         }
     }
@@ -684,6 +718,9 @@ pub mod runtime {
                         }
                         LenarValue::Void => {
                             stdout().write("Void".as_bytes()).ok();
+                        }
+                        LenarValue::Enum(en) => {
+                            stdout().write(en.to_string().as_bytes()).ok();
                         }
                     }
                 }
@@ -912,6 +949,133 @@ pub mod runtime {
                 }
             }
 
+            // Ok()
+            #[derive(Debug)]
+            struct OkFunc;
+
+            impl RuntimeFunction for OkFunc {
+                fn call<'s>(
+                    &mut self,
+                    mut args: Vec<LenarValue<'s>>,
+                    _tokens_map: &'s Arc<Tokenizer>,
+                ) -> LenarValue<'s> {
+                    let v = args.remove(0);
+                    LenarValue::Enum(LenarEnum::new_with_variant("Ok", v))
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "Ok"
+                }
+            }
+
+            // Err()
+            #[derive(Debug)]
+            struct ErrFunc;
+
+            impl RuntimeFunction for ErrFunc {
+                fn call<'s>(
+                    &mut self,
+                    mut args: Vec<LenarValue<'s>>,
+                    _tokens_map: &'s Arc<Tokenizer>,
+                ) -> LenarValue<'s> {
+                    let v = args.remove(0);
+                    LenarValue::Enum(LenarEnum::new_with_variant("Err", v))
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "Err"
+                }
+            }
+
+            // isOk()
+            #[derive(Debug)]
+            struct IsOkFunc;
+
+            impl RuntimeFunction for IsOkFunc {
+                fn call<'s>(
+                    &mut self,
+                    mut args: Vec<LenarValue<'s>>,
+                    _tokens_map: &'s Arc<Tokenizer>,
+                ) -> LenarValue<'s> {
+                    let v = args.remove(0);
+                    match v {
+                        LenarValue::Enum(variants) => {
+                            let ok_variant = variants.peek_variant("Ok");
+                            LenarValue::Bool(ok_variant.is_some())
+                        }
+                        _ => LenarValue::Bool(false),
+                    }
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "isOk"
+                }
+            }
+
+            // unwrap()
+            #[derive(Debug)]
+            struct UnwrapFunc;
+
+            impl RuntimeFunction for UnwrapFunc {
+                fn call<'s>(
+                    &mut self,
+                    mut args: Vec<LenarValue<'s>>,
+                    _tokens_map: &'s Arc<Tokenizer>,
+                ) -> LenarValue<'s> {
+                    let v = args.remove(0);
+                    match v {
+                        LenarValue::Enum(variants) => {
+                            let variant = variants.get_variant("Ok");
+                            variant.unwrap_or_else(|| panic!("Unwrapped a <Err> value."))
+                        }
+                        _ => LenarValue::Void,
+                    }
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "unwrap"
+                }
+            }
+
+            // unwrap()
+            #[derive(Debug)]
+            struct UnwrapErrFunc;
+
+            impl RuntimeFunction for UnwrapErrFunc {
+                fn call<'s>(
+                    &mut self,
+                    mut args: Vec<LenarValue<'s>>,
+                    _tokens_map: &'s Arc<Tokenizer>,
+                ) -> LenarValue<'s> {
+                    let v = args.remove(0);
+                    match v {
+                        LenarValue::Enum(variants) => {
+                            let variant = variants.get_variant("Err");
+                            variant.unwrap_or_else(|| panic!("Unwrapped a <Ok> value."))
+                        }
+                        _ => LenarValue::Void,
+                    }
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "unwrapErr"
+                }
+            }
+
+            self.variables.insert(
+                "unwrapErr".to_string(),
+                LenarValue::Function(Rc::new(UnwrapErrFunc)),
+            );
+            self.variables.insert(
+                "unwrap".to_string(),
+                LenarValue::Function(Rc::new(UnwrapFunc)),
+            );
+            self.variables
+                .insert("Err".to_string(), LenarValue::Function(Rc::new(ErrFunc)));
+            self.variables
+                .insert("isOk".to_string(), LenarValue::Function(Rc::new(IsOkFunc)));
+            self.variables
+                .insert("Ok".to_string(), LenarValue::Function(Rc::new(OkFunc)));
             self.variables.insert(
                 "wait".to_string(),
                 LenarValue::Function(Rc::new(WaitFunc::new(self.locks.clone()))),
