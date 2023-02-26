@@ -461,9 +461,10 @@ pub mod runtime {
         OwnedBytes(Vec<u8>),
         Void,
         Bool(bool),
-        Instance(Rc<dyn RuntimeInstance<'a>>),
+        Instance(Rc<RefCell<dyn RuntimeInstance<'a>>>),
         Function(Rc<dyn RuntimeFunction>),
         Enum(LenarEnum<'a>),
+        Ref(Rc<RefCell<LenarValue<'a>>>),
     }
 
     #[derive(Debug, Clone, Default)]
@@ -511,9 +512,10 @@ pub mod runtime {
                 LenarValue::OwnedBytes(b) => f.write_str(from_utf8(b).unwrap()),
                 LenarValue::Void => f.write_str("Void"),
                 LenarValue::Bool(b) => f.write_str(&format!("{b}")),
-                LenarValue::Instance(i) => f.write_str(i.get_name()),
+                LenarValue::Instance(i) => f.write_str(i.borrow().get_name()),
                 LenarValue::Function(func) => f.write_str(func.get_name()),
                 LenarValue::Enum(en) => f.write_str(&en.to_string()),
+                LenarValue::Ref(r) => f.write_str(&r.borrow().to_string()),
             }
         }
     }
@@ -544,6 +546,20 @@ pub mod runtime {
             match self {
                 Self::OwnedBytes(v) => Some(v),
                 Self::Bytes(v) => Some(v),
+                _ => None,
+            }
+        }
+
+        pub fn as_integer_mut(&mut self) -> Option<&mut usize> {
+            match self {
+                Self::Usize(v) => Some(v),
+                _ => None,
+            }
+        }
+
+        pub fn as_integer(&self) -> Option<&usize> {
+            match self {
+                Self::Usize(v) => Some(v),
                 _ => None,
             }
         }
@@ -587,7 +603,7 @@ pub mod runtime {
         pub fn add_global_instance(&mut self, val: impl RuntimeInstance<'a> + 'static) {
             self.variables.insert(
                 val.get_name().to_owned(),
-                LenarValue::Instance(Rc::new(val)),
+                LenarValue::Instance(Rc::new(RefCell::new(val))),
             );
         }
 
@@ -702,7 +718,7 @@ pub mod runtime {
                             stdout().write(func.get_name().as_bytes()).ok();
                         }
                         LenarValue::Instance(instance) => {
-                            stdout().write(instance.get_name().as_bytes()).ok();
+                            stdout().write(instance.borrow().get_name().as_bytes()).ok();
                         }
                         LenarValue::Bool(b) => {
                             stdout().write(b.to_string().as_bytes()).ok();
@@ -721,6 +737,9 @@ pub mod runtime {
                         }
                         LenarValue::Enum(en) => {
                             stdout().write(en.to_string().as_bytes()).ok();
+                        }
+                        LenarValue::Ref(r) => {
+                            stdout().write(r.borrow().to_string().as_bytes()).ok();
                         }
                     }
                 }
@@ -1062,6 +1081,57 @@ pub mod runtime {
                 }
             }
 
+            // ref()
+            #[derive(Debug)]
+            struct RefFunc;
+
+            impl RuntimeFunction for RefFunc {
+                fn call<'s>(
+                    &mut self,
+                    mut args: Vec<LenarValue<'s>>,
+                    _tokens_map: &'s Arc<Tokenizer>,
+                ) -> LenarValue<'s> {
+                    let v = args.remove(0);
+                    LenarValue::Ref(Rc::new(RefCell::new(v)))
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "ref"
+                }
+            }
+
+            // add()
+            #[derive(Debug)]
+            struct AddFunc;
+
+            impl RuntimeFunction for AddFunc {
+                fn call<'s>(
+                    &mut self,
+                    mut args: Vec<LenarValue<'s>>,
+                    _tokens_map: &'s Arc<Tokenizer>,
+                ) -> LenarValue<'s> {
+                    let value = args.remove(0);
+                    let increment = args.remove(0);
+                    if let LenarValue::Ref(value) = value {
+                        let mut value = value.borrow_mut();
+                        let value = value.as_integer_mut();
+                        let increment = increment.as_integer();
+                        if let Some((value, increment)) = value.zip(increment) {
+                            *value += increment;
+                        }
+                    }
+                    LenarValue::Void
+                }
+
+                fn get_name<'s>(&self) -> &'s str {
+                    "add"
+                }
+            }
+
+            self.variables
+                .insert("add".to_string(), LenarValue::Function(Rc::new(AddFunc)));
+            self.variables
+                .insert("ref".to_string(), LenarValue::Function(Rc::new(RefFunc)));
             self.variables.insert(
                 "unwrapErr".to_string(),
                 LenarValue::Function(Rc::new(UnwrapErrFunc)),
@@ -1114,7 +1184,7 @@ pub mod runtime {
             );
             self.variables.insert(
                 "Lenar".to_string(),
-                LenarValue::Instance(Rc::new(LenarGlobal)),
+                LenarValue::Instance(Rc::new(RefCell::new(LenarGlobal))),
             );
             self.variables.insert(
                 "isEqual".to_string(),
@@ -1220,17 +1290,27 @@ pub mod runtime {
 
         pub fn get_variable_by_path(
             &mut self,
-            path: &'a [String],
-            scope_id: &[usize],
+            var_path: &'a [String],
+            path: &mut Iter<usize>,
         ) -> LenarValue<'a> {
-            let mut path = path.iter();
-            let scope = self.get_scope(&mut scope_id.iter());
+            let scope = path.next();
+            if let Some(scope) = scope {
+                let result = self
+                    .scopes
+                    .get_mut(scope)
+                    .unwrap()
+                    .get_variable_by_path(var_path, path);
+                if !result.is_void() {
+                    return result;
+                }
+            }
 
-            let var_holder = path.next().unwrap();
+            let mut var_path = var_path.iter();
 
-            if let Some(LenarValue::Instance(instance)) = scope.variables.get_mut(var_holder) {
-                let instance = Rc::get_mut(instance).unwrap();
-                instance.get_props(&mut path)
+            let var_holder = var_path.next().unwrap();
+            if let Some(LenarValue::Instance(instance)) = self.variables.get(var_holder) {
+                let instance = instance.borrow_mut();
+                instance.get_props(&mut var_path)
             } else {
                 LenarValue::Void
             }
@@ -1343,7 +1423,7 @@ pub mod runtime {
             Token::StringVal { value } => LenarValue::Str(value),
             Token::BytesVal { value } => LenarValue::Bytes(value),
             Token::VarRef { var_name } => scope.get_variable(var_name, &mut scope_path.iter()),
-            Token::PropertyRef { path } => scope.get_variable_by_path(path, scope_path),
+            Token::PropertyRef { path } => scope.get_variable_by_path(path, &mut scope_path.iter()),
             Token::FnDef {
                 arguments_block,
                 block_value,
