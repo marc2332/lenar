@@ -16,5 +16,6 @@ println(if(isEqual("test" "test")) { "wow" });
 - Minimal dependencies
 - Easy to embed
 - Lightweight
+- Simple multithreading
 
 [MIT License](./LICENSE.md)
