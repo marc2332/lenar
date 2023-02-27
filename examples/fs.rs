@@ -22,5 +22,5 @@ fn main() {
 
     let tokenizer = Arc::new(Tokenizer::new(&code));
 
-    Runtime::evaluate(&tokenizer);
+    Runtime::evaluate(&tokenizer).unwrap();
 }

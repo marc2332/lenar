@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use lenar::*;
 
 fn main() {
@@ -29,7 +27,16 @@ fn main() {
         println(value);
     "#;
 
-    let tokenizer = Arc::new(Tokenizer::new(&code));
+    let tokenizer = Tokenizer::new(&code).wrap();
 
-    Runtime::evaluate(&tokenizer);
+    Runtime::evaluate(&tokenizer).unwrap();
+
+    let parser = Tokenizer::new(
+        r#"
+        woow();
+    "#,
+    )
+    .wrap();
+
+    println!("{:?}", Runtime::evaluate(&parser));
 }
