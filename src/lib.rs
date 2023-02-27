@@ -473,6 +473,7 @@ pub mod runtime {
     #[derive(Debug, Clone)]
     pub enum LenarError {
         VariableNotFound(String),
+        WrongValue(String)
     }
 
     #[derive(Debug, Clone, Default)]
@@ -1049,11 +1050,11 @@ pub mod runtime {
                     mut args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
                 ) -> LenarResult<LenarValue<'s>> {
-                    let v = args.remove(0);
-                    match v {
+                    let value = args.remove(0);
+                    match value {
                         LenarValue::Enum(variants) => {
                             let variant = variants.get_variant("Ok");
-                            Ok(variant.unwrap_or_else(|| panic!("Unwrapped a <Err> value.")))
+                            variant.ok_or_else(|| LenarError::WrongValue("Ok".to_owned()))
                         }
                         _ => Ok(LenarValue::Void),
                     }
@@ -1074,11 +1075,11 @@ pub mod runtime {
                     mut args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
                 ) -> LenarResult<LenarValue<'s>> {
-                    let v = args.remove(0);
-                    match v {
+                    let value = args.remove(0);
+                    match value {
                         LenarValue::Enum(variants) => {
                             let variant = variants.get_variant("Err");
-                            Ok(variant.unwrap_or_else(|| panic!("Unwrapped a <Ok> value.")))
+                            variant.ok_or_else(|| LenarError::WrongValue("Err".to_owned()))
                         }
                         _ => Ok(LenarValue::Void),
                     }
