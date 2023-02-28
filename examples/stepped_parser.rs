@@ -20,5 +20,5 @@ fn main() {
 
     tokenizer.parse(code);
 
-    Runtime::evaluate(&Arc::new(tokenizer));
+    Runtime::evaluate(&Arc::new(tokenizer)).unwrap();
 }

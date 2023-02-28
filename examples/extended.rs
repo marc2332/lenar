@@ -40,11 +40,11 @@ fn main() {
             &mut self,
             mut args: Vec<LenarValue<'s>>,
             _tokens_map: &'s Arc<Tokenizer>,
-        ) -> LenarValue<'s> {
+        ) -> LenarResult<LenarValue<'s>> {
             let val = args.remove(0);
             let val = val.to_string();
             println!("{val}");
-            LenarValue::Void
+            Ok(LenarValue::Void)
         }
 
         fn get_name<'s>(&self) -> &'s str {
@@ -55,5 +55,5 @@ fn main() {
     scope.add_global_function(CoolFunc);
     scope.add_global_instance(CoolInstance);
 
-    Runtime::run_with_scope(&mut scope, &tokenizer);
+    Runtime::run_with_scope(&mut scope, &tokenizer).unwrap();
 }

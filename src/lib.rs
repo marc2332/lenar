@@ -425,6 +425,8 @@ pub mod runtime {
 
     use crate::tokenizer::{Token, Tokenizer};
 
+    pub type LenarResult<T> = Result<T, LenarError>;
+
     /// A interpreter given a Tokenizer
     pub struct Runtime;
 
@@ -432,13 +434,13 @@ pub mod runtime {
         pub fn run_with_scope<'a>(
             context: &mut Scope<'a>,
             tokenizer: &'a Arc<Tokenizer>,
-        ) -> LenarValue<'a> {
+        ) -> LenarResult<LenarValue<'a>> {
             let global_block = tokenizer.get_token(tokenizer.get_global()).unwrap();
             evaluate_expression(global_block, tokenizer, context, &[])
         }
 
         /// Evaluate the runtime code and return the exit value
-        pub fn evaluate(tokenizer: &Arc<Tokenizer>) -> LenarValue {
+        pub fn evaluate(tokenizer: &Arc<Tokenizer>) -> LenarResult<LenarValue> {
             let mut context = Scope::default();
             context.setup_globals();
 
@@ -447,7 +449,7 @@ pub mod runtime {
 
         pub fn run(code: &str) {
             let tokenizer = Arc::new(Tokenizer::new(code));
-            Self::evaluate(&tokenizer);
+            Self::evaluate(&tokenizer).ok();
         }
     }
 
@@ -465,6 +467,13 @@ pub mod runtime {
         Function(Rc<dyn RuntimeFunction>),
         Enum(LenarEnum<'a>),
         Ref(Rc<RefCell<LenarValue<'a>>>),
+    }
+
+    /// Runtime values
+    #[derive(Debug, Clone)]
+    pub enum LenarError {
+        VariableNotFound(String),
+        WrongValue(String)
     }
 
     #[derive(Debug, Clone, Default)]
@@ -585,7 +594,7 @@ pub mod runtime {
             &mut self,
             _args: Vec<LenarValue<'s>>,
             tokens_map: &'s Arc<Tokenizer>,
-        ) -> LenarValue<'s>;
+        ) -> LenarResult<LenarValue<'s>>;
 
         fn get_name<'s>(&self) -> &'s str;
     }
@@ -635,16 +644,16 @@ pub mod runtime {
                     &mut self,
                     args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
+                ) -> LenarResult<LenarValue<'s>> {
                     match args[0] {
                         LenarValue::Usize(rid) => {
                             let resources_files = self.resources_files.borrow_mut();
                             let mut file = resources_files.get(rid).unwrap();
                             let mut buf = Vec::new();
                             file.read_to_end(&mut buf).unwrap();
-                            LenarValue::OwnedBytes(buf)
+                            Ok(LenarValue::OwnedBytes(buf))
                         }
-                        _ => LenarValue::Void,
+                        _ => Ok(LenarValue::Void),
                     }
                 }
 
@@ -669,7 +678,7 @@ pub mod runtime {
                     &mut self,
                     args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
+                ) -> LenarResult<LenarValue<'s>> {
                     let file_path = args[0].as_bytes().unwrap();
                     let file_path = from_utf8(file_path).unwrap();
                     let file = File::open(file_path).unwrap();
@@ -677,7 +686,7 @@ pub mod runtime {
                     let mut resources_files = self.resources_files.borrow_mut();
                     let rid = resources_files.insert(file);
 
-                    LenarValue::Usize(rid)
+                    Ok(LenarValue::Usize(rid))
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -750,12 +759,12 @@ pub mod runtime {
                     &mut self,
                     args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
+                ) -> LenarResult<LenarValue<'s>> {
                     for val in args {
                         Self::write(&val);
                     }
                     stdout().flush().ok();
-                    LenarValue::Void
+                    Ok(LenarValue::Void)
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -772,13 +781,13 @@ pub mod runtime {
                     &mut self,
                     args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
+                ) -> LenarResult<LenarValue<'s>> {
                     for val in args {
                         PrintFunc::write(&val);
                     }
                     stdout().write("\n".as_bytes()).ok();
                     stdout().flush().ok();
-                    LenarValue::Void
+                    Ok(LenarValue::Void)
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -795,14 +804,14 @@ pub mod runtime {
                     &mut self,
                     args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
+                ) -> LenarResult<LenarValue<'s>> {
                     let args = args.get(0).zip(args.get(1));
                     let res = if let Some((a, b)) = args {
                         a.eq(b)
                     } else {
                         false
                     };
-                    LenarValue::Bool(res)
+                    Ok(LenarValue::Bool(res))
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -819,8 +828,8 @@ pub mod runtime {
                     &mut self,
                     args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
-                    LenarValue::List(args)
+                ) -> LenarResult<LenarValue<'s>> {
+                    Ok(LenarValue::List(args))
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -845,7 +854,7 @@ pub mod runtime {
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
+                ) -> LenarResult<LenarValue<'s>> {
                     let iterator = args.remove(0);
                     let fun = args.remove(0);
 
@@ -859,7 +868,7 @@ pub mod runtime {
 
                                 for byte in bytes {
                                     if let Ok(byte) = byte {
-                                        fun.call(vec![LenarValue::Bytes(&[byte])], _tokens_map);
+                                        fun.call(vec![LenarValue::Bytes(&[byte])], _tokens_map)?;
                                     } else {
                                         break;
                                     }
@@ -867,24 +876,24 @@ pub mod runtime {
                             }
                             LenarValue::Bytes(bytes) => {
                                 for byte in bytes {
-                                    fun.call(vec![LenarValue::Bytes(&[*byte])], _tokens_map);
+                                    fun.call(vec![LenarValue::Bytes(&[*byte])], _tokens_map)?;
                                 }
                             }
                             LenarValue::OwnedBytes(bytes) => {
                                 for byte in bytes {
-                                    fun.call(vec![LenarValue::Bytes(&[byte])], _tokens_map);
+                                    fun.call(vec![LenarValue::Bytes(&[byte])], _tokens_map)?;
                                 }
                             }
                             LenarValue::List(items) => {
                                 for (i, item) in items.into_iter().enumerate() {
-                                    fun.call(vec![item, LenarValue::Usize(i)], _tokens_map);
+                                    fun.call(vec![item, LenarValue::Usize(i)], _tokens_map)?;
                                 }
                             }
                             _ => {}
                         }
                     }
 
-                    LenarValue::Void
+                    Ok(LenarValue::Void)
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -901,15 +910,15 @@ pub mod runtime {
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
                     tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
+                ) -> LenarResult<LenarValue<'s>> {
                     let fun = args.remove(0);
 
                     if let LenarValue::Function(mut fun) = fun {
                         let fun = Rc::get_mut(&mut fun).unwrap();
-                        fun.call(args, tokens_map);
+                        fun.call(args, tokens_map)?;
                     }
 
-                    LenarValue::Void
+                    Ok(LenarValue::Void)
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -926,12 +935,12 @@ pub mod runtime {
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
+                ) -> LenarResult<LenarValue<'s>> {
                     let v = args.remove(0);
                     if let LenarValue::Usize(time) = v {
                         thread::sleep(Duration::from_millis(time as u64));
                     }
-                    LenarValue::Void
+                    Ok(LenarValue::Void)
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -954,13 +963,13 @@ pub mod runtime {
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
+                ) -> LenarResult<LenarValue<'s>> {
                     let v = args.remove(0);
                     if let LenarValue::Usize(rid) = v {
                         let handle = self.0.lock().unwrap().remove(rid);
                         handle.join().unwrap();
                     }
-                    LenarValue::Void
+                    Ok(LenarValue::Void)
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -977,9 +986,9 @@ pub mod runtime {
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
+                ) -> LenarResult<LenarValue<'s>> {
                     let v = args.remove(0);
-                    LenarValue::Enum(LenarEnum::new_with_variant("Ok", v))
+                    Ok(LenarValue::Enum(LenarEnum::new_with_variant("Ok", v)))
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -996,9 +1005,9 @@ pub mod runtime {
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
+                ) -> LenarResult<LenarValue<'s>> {
                     let v = args.remove(0);
-                    LenarValue::Enum(LenarEnum::new_with_variant("Err", v))
+                    Ok(LenarValue::Enum(LenarEnum::new_with_variant("Err", v)))
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -1015,14 +1024,14 @@ pub mod runtime {
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
+                ) -> LenarResult<LenarValue<'s>> {
                     let v = args.remove(0);
                     match v {
                         LenarValue::Enum(variants) => {
                             let ok_variant = variants.peek_variant("Ok");
-                            LenarValue::Bool(ok_variant.is_some())
+                            Ok(LenarValue::Bool(ok_variant.is_some()))
                         }
-                        _ => LenarValue::Bool(false),
+                        _ => Ok(LenarValue::Bool(false)),
                     }
                 }
 
@@ -1040,14 +1049,14 @@ pub mod runtime {
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
-                    let v = args.remove(0);
-                    match v {
+                ) -> LenarResult<LenarValue<'s>> {
+                    let value = args.remove(0);
+                    match value {
                         LenarValue::Enum(variants) => {
                             let variant = variants.get_variant("Ok");
-                            variant.unwrap_or_else(|| panic!("Unwrapped a <Err> value."))
+                            variant.ok_or_else(|| LenarError::WrongValue("Ok".to_owned()))
                         }
-                        _ => LenarValue::Void,
+                        _ => Ok(LenarValue::Void),
                     }
                 }
 
@@ -1065,14 +1074,14 @@ pub mod runtime {
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
-                    let v = args.remove(0);
-                    match v {
+                ) -> LenarResult<LenarValue<'s>> {
+                    let value = args.remove(0);
+                    match value {
                         LenarValue::Enum(variants) => {
                             let variant = variants.get_variant("Err");
-                            variant.unwrap_or_else(|| panic!("Unwrapped a <Ok> value."))
+                            variant.ok_or_else(|| LenarError::WrongValue("Err".to_owned()))
                         }
-                        _ => LenarValue::Void,
+                        _ => Ok(LenarValue::Void),
                     }
                 }
 
@@ -1090,9 +1099,9 @@ pub mod runtime {
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
+                ) -> LenarResult<LenarValue<'s>> {
                     let v = args.remove(0);
-                    LenarValue::Ref(Rc::new(RefCell::new(v)))
+                    Ok(LenarValue::Ref(Rc::new(RefCell::new(v))))
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -1109,7 +1118,7 @@ pub mod runtime {
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
                     _tokens_map: &'s Arc<Tokenizer>,
-                ) -> LenarValue<'s> {
+                ) -> LenarResult<LenarValue<'s>> {
                     let value = args.remove(0);
                     let increment = args.remove(0);
                     if let LenarValue::Ref(value) = value {
@@ -1120,7 +1129,7 @@ pub mod runtime {
                             *value += increment;
                         }
                     }
-                    LenarValue::Void
+                    Ok(LenarValue::Void)
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -1234,14 +1243,15 @@ pub mod runtime {
             path: &mut Iter<usize>,
             args: Vec<LenarValue<'a>>,
             tokens_map: &'a Arc<Tokenizer>,
-        ) -> LenarValue<'a> {
+        ) -> LenarResult<LenarValue<'a>> {
+            let func_name = name.as_ref().to_string();
             let func = self.get_function(name, path);
 
             if let Some(func) = func {
                 let func = Rc::get_mut(func).unwrap();
                 func.call(args, tokens_map)
             } else {
-                LenarValue::Void
+                Err(LenarError::VariableNotFound(func_name))
             }
         }
 
@@ -1261,16 +1271,16 @@ pub mod runtime {
             &mut self,
             name: impl AsRef<str>,
             path: &mut Iter<usize>,
-        ) -> LenarValue<'a> {
+        ) -> LenarResult<LenarValue<'a>> {
             let scope = path.next();
             if let Some(scope) = scope {
                 let result = self
                     .scopes
                     .get_mut(scope)
                     .unwrap()
-                    .get_variable(name.as_ref(), path);
+                    .get_variable(name.as_ref(), path)?;
                 if !result.is_void() {
-                    return result;
+                    return Ok(result);
                 }
             }
 
@@ -1279,12 +1289,12 @@ pub mod runtime {
             // `variables.remove(name.as_ref())` and without the `clone()`
             // This way the variable's owned value will get removed from the scope folder
             // and returned to the variable referencer
-
+            let var_name = name.as_ref().to_owned();
             let var = self.variables.get(name.as_ref());
             if let Some(var) = var {
-                var.clone()
+                Ok(var.clone())
             } else {
-                LenarValue::Void
+                Err(LenarError::VariableNotFound(var_name))
             }
         }
 
@@ -1292,16 +1302,16 @@ pub mod runtime {
             &mut self,
             var_path: &'a [String],
             path: &mut Iter<usize>,
-        ) -> LenarValue<'a> {
+        ) -> LenarResult<LenarValue<'a>> {
             let scope = path.next();
             if let Some(scope) = scope {
                 let result = self
                     .scopes
                     .get_mut(scope)
                     .unwrap()
-                    .get_variable_by_path(var_path, path);
+                    .get_variable_by_path(var_path, path)?;
                 if !result.is_void() {
-                    return result;
+                    return Ok(result);
                 }
             }
 
@@ -1310,9 +1320,9 @@ pub mod runtime {
             let var_holder = var_path.next().unwrap();
             if let Some(LenarValue::Instance(instance)) = self.variables.get(var_holder) {
                 let instance = instance.borrow_mut();
-                instance.get_props(&mut var_path)
+                Ok(instance.get_props(&mut var_path))
             } else {
-                LenarValue::Void
+                Err(LenarError::VariableNotFound(var_holder.clone()))
             }
         }
 
@@ -1337,7 +1347,7 @@ pub mod runtime {
         tokens_map: &'a Arc<Tokenizer>,
         scope: &mut Scope<'a>,
         scope_path: &[usize],
-    ) -> LenarValue<'a> {
+    ) -> LenarResult<LenarValue<'a>> {
         match token {
             Token::Block { tokens } => {
                 let mut next_scope_id = scope_path.last().copied().unwrap_or(0);
@@ -1368,17 +1378,17 @@ pub mod runtime {
                     }
                 }
 
-                LenarValue::Void
+                Ok(LenarValue::Void)
             }
             Token::VarDef {
                 var_name,
                 block_value,
             } => {
                 let value = tokens_map.get_token(*block_value).unwrap();
-                let res = evaluate_expression(value, tokens_map, scope, scope_path);
+                let res = evaluate_expression(value, tokens_map, scope, scope_path)?;
                 scope.define_variable(var_name, scope_path, res);
 
-                LenarValue::Void
+                Ok(LenarValue::Void)
             }
             Token::FunctionCall { arguments, fn_name } => {
                 if fn_name == "thread" {
@@ -1395,23 +1405,26 @@ pub mod runtime {
                         if let Token::Block { tokens } = value {
                             for tok in tokens {
                                 let tok = tokens_map.get_token(*tok).unwrap();
-                                let res = evaluate_expression(tok, &tokens_map, &mut context, &[]);
+                                let res = evaluate_expression(tok, &tokens_map, &mut context, &[])
+                                    .unwrap();
 
                                 args.push(res);
                             }
                         }
 
-                        context.call_function(fn_name, &mut [].iter(), args, &tokens_map);
+                        context
+                            .call_function(fn_name, &mut [].iter(), args, &tokens_map)
+                            .unwrap();
                     });
                     let id = scope.locks.lock().unwrap().insert(handle);
-                    LenarValue::Usize(id)
+                    Ok(LenarValue::Usize(id))
                 } else {
                     let value = tokens_map.get_token(*arguments).unwrap();
                     let mut args = Vec::new();
                     if let Token::Block { tokens } = value {
                         for tok in tokens {
                             let tok = tokens_map.get_token(*tok).unwrap();
-                            let res = evaluate_expression(tok, tokens_map, scope, scope_path);
+                            let res = evaluate_expression(tok, tokens_map, scope, scope_path)?;
 
                             args.push(res);
                         }
@@ -1420,8 +1433,8 @@ pub mod runtime {
                     scope.call_function(fn_name, &mut scope_path.iter(), args, tokens_map)
                 }
             }
-            Token::StringVal { value } => LenarValue::Str(value),
-            Token::BytesVal { value } => LenarValue::Bytes(value),
+            Token::StringVal { value } => Ok(LenarValue::Str(value)),
+            Token::BytesVal { value } => Ok(LenarValue::Bytes(value)),
             Token::VarRef { var_name } => scope.get_variable(var_name, &mut scope_path.iter()),
             Token::PropertyRef { path } => scope.get_variable_by_path(path, &mut scope_path.iter()),
             Token::FnDef {
@@ -1440,7 +1453,7 @@ pub mod runtime {
                         &mut self,
                         mut args: Vec<LenarValue<'s>>,
                         tokens_map: &'s Arc<Tokenizer>,
-                    ) -> LenarValue<'s> {
+                    ) -> LenarResult<LenarValue<'s>> {
                         // Anonymous functions do not inherit any scope,
                         // instead, they only have their own global scope,
                         // This means, you cannot reference variables from outside
@@ -1470,17 +1483,17 @@ pub mod runtime {
                         "Anonymous"
                     }
                 }
-                LenarValue::Function(Rc::new(Function {
+                Ok(LenarValue::Function(Rc::new(Function {
                     arguments_block: *arguments_block,
                     block_value: *block_value,
-                }))
+                })))
             }
             Token::IfDef {
                 condition_block: expr,
                 block_value,
             } => {
                 let expr_token = tokens_map.get_token(*expr).unwrap();
-                let expr_res = evaluate_expression(expr_token, tokens_map, scope, scope_path);
+                let expr_res = evaluate_expression(expr_token, tokens_map, scope, scope_path)?;
 
                 // If the condition expression returns a `true` it
                 // will evaluate the actual block
@@ -1488,10 +1501,10 @@ pub mod runtime {
                     let expr_body_token = tokens_map.get_token(*block_value).unwrap();
                     evaluate_expression(expr_body_token, tokens_map, scope, scope_path)
                 } else {
-                    LenarValue::Void
+                    Ok(LenarValue::Void)
                 }
             }
-            Token::NumberVal { value } => LenarValue::Usize(*value),
+            Token::NumberVal { value } => Ok(LenarValue::Usize(*value)),
         }
     }
 }
