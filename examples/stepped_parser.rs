@@ -3,8 +3,8 @@ use std::sync::Arc;
 use lenar::*;
 
 fn main() {
+    use parser::*;
     use runtime::*;
-    use tokenizer::*;
 
     let code = r#"
         let hey = fn(v) {
@@ -12,13 +12,13 @@ fn main() {
         };
     "#;
 
-    let mut tokenizer = Tokenizer::new(&code);
+    let mut parser = Parser::new(&code);
 
     let code = r#"
         hey("marc");
     "#;
 
-    tokenizer.parse(code);
+    parser.parse(code);
 
-    Runtime::evaluate(&Arc::new(tokenizer)).unwrap();
+    Runtime::evaluate(&Arc::new(parser)).unwrap();
 }

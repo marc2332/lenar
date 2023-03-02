@@ -1,33 +1,33 @@
-pub mod tokenizer {
+pub mod parser {
     use std::{iter::Peekable, str::Chars, sync::Arc};
 
     pub use slab::Slab;
 
-    pub type TokenKey = usize;
+    pub type ParserObjectKey = usize;
 
-    /// `Tokenizer` transforms an input, e.g a string, into a a Tokens map
+    /// [`Parser`] transforms the given code into an AST.
     #[derive(Debug, Clone)]
-    pub struct Tokenizer {
-        tokens: Slab<Token>,
-        global_block: TokenKey,
+    pub struct Parser {
+        objects: Slab<ParserObject>,
+        global_block: ParserObjectKey,
     }
 
     #[derive(Debug, Clone)]
-    pub enum Token {
+    pub enum ParserObject {
         Block {
-            tokens: Vec<TokenKey>,
+            objects: Vec<ParserObjectKey>,
         },
         VarDef {
-            block_value: TokenKey,
+            block_value: ParserObjectKey,
             var_name: String,
         },
         FnDef {
-            arguments_block: TokenKey,
-            block_value: TokenKey,
+            arguments_block: ParserObjectKey,
+            block_value: ParserObjectKey,
         },
         IfDef {
-            condition_block: TokenKey,
-            block_value: TokenKey,
+            condition_block: ParserObjectKey,
+            block_value: ParserObjectKey,
         },
         NumberVal {
             value: usize,
@@ -40,7 +40,7 @@ pub mod tokenizer {
         },
         FunctionCall {
             fn_name: String,
-            arguments: TokenKey,
+            arguments: ParserObjectKey,
         },
         VarRef {
             var_name: String,
@@ -50,11 +50,11 @@ pub mod tokenizer {
         },
     }
 
-    impl Token {
+    impl ParserObject {
         #[inline(always)]
-        pub fn add_token(&mut self, token: TokenKey) {
-            if let Token::Block { tokens } = self {
-                tokens.push(token);
+        pub fn add_object(&mut self, object: ParserObjectKey) {
+            if let ParserObject::Block { objects } = self {
+                objects.push(object);
             }
         }
     }
@@ -114,29 +114,34 @@ pub mod tokenizer {
         FuncValue,
     }
 
-    impl Tokenizer {
+    impl Parser {
+        /// Create a [`Parser`] given some code
         pub fn new(code: &str) -> Self {
-            let mut tokens_map = Slab::new();
+            let mut parser = Slab::new();
 
-            let global_block_token = Token::Block { tokens: Vec::new() };
-            let global_block = tokens_map.insert(global_block_token);
+            let global_block_object = ParserObject::Block {
+                objects: Vec::new(),
+            };
+            let global_block = parser.insert(global_block_object);
 
-            let mut tokenizer = Self {
-                tokens: tokens_map,
+            let mut parser = Self {
+                objects: parser,
                 global_block,
             };
 
-            tokenizer.parse(code);
+            parser.parse(code);
 
-            tokenizer
+            parser
         }
 
+        /// Wrap into an [Arc]
         pub fn wrap(self) -> Arc<Self> {
             Arc::new(self)
         }
 
+        /// Parse additional code
         pub fn parse(&mut self, code: &str) {
-            let tokens_map = &mut self.tokens;
+            let parser = &mut self.objects;
             let global_block = self.global_block;
 
             let mut block_indexes = vec![(global_block, BlockType::Generic)];
@@ -199,7 +204,7 @@ pub mod tokenizer {
                 if val == '"' {
                     // String closed
                     if string_count > 0 {
-                        let string_val = Token::BytesVal {
+                        let string_val = ParserObject::BytesVal {
                             value: code[i - string_count + 1..i]
                                 .chars()
                                 .collect::<String>()
@@ -207,11 +212,11 @@ pub mod tokenizer {
                                 .to_vec(),
                         };
 
-                        let string_key = tokens_map.insert(string_val);
+                        let string_key = parser.insert(string_val);
 
-                        let block_value = tokens_map.get_mut(current_block).unwrap();
-                        if let Token::Block { tokens } = block_value {
-                            tokens.push(string_key);
+                        let block_value = parser.get_mut(current_block).unwrap();
+                        if let ParserObject::Block { objects } = block_value {
+                            objects.push(string_key);
                         }
                         last_action = PerfomedAction::ClosedString;
                         string_count = 0
@@ -224,12 +229,14 @@ pub mod tokenizer {
 
                 // Start a block
                 if val == '{' && string_count == 0 {
-                    let block = Token::Block { tokens: Vec::new() };
-                    let block_key = tokens_map.insert(block);
+                    let block = ParserObject::Block {
+                        objects: Vec::new(),
+                    };
+                    let block_key = parser.insert(block);
 
                     block_indexes.push((block_key, BlockType::Generic));
-                    let current_block = tokens_map.get_mut(current_block).unwrap();
-                    current_block.add_token(block_key);
+                    let current_block = parser.get_mut(current_block).unwrap();
+                    current_block.add_object(block_key);
 
                     last_action = PerfomedAction::OpenedBlock;
 
@@ -250,17 +257,19 @@ pub mod tokenizer {
                 if string_count == 0 && slice_with_size(i, i + 3, code) == Some("let") {
                     advance_by(3, &mut chars);
                     let var_name = slice_until(' ', &mut chars);
-                    let value_block = Token::Block { tokens: Vec::new() };
-                    let block_key = tokens_map.insert(value_block);
+                    let value_block = ParserObject::Block {
+                        objects: Vec::new(),
+                    };
+                    let block_key = parser.insert(value_block);
 
-                    let var_def = Token::VarDef {
+                    let var_def = ParserObject::VarDef {
                         block_value: block_key,
                         var_name,
                     };
-                    let var_key = tokens_map.insert(var_def);
+                    let var_key = parser.insert(var_def);
 
-                    let current_block = tokens_map.get_mut(current_block).unwrap();
-                    current_block.add_token(var_key);
+                    let current_block = parser.get_mut(current_block).unwrap();
+                    current_block.add_object(var_key);
 
                     block_indexes.push((block_key, BlockType::Value));
 
@@ -281,57 +290,67 @@ pub mod tokenizer {
                         let item_name = format!("{val}{item_name}");
 
                         if item_name == "if" {
-                            let expr_block = Token::Block { tokens: Vec::new() };
-                            let expr_block_key = tokens_map.insert(expr_block);
+                            let expr_block = ParserObject::Block {
+                                objects: Vec::new(),
+                            };
+                            let expr_block_key = parser.insert(expr_block);
 
-                            let value_block = Token::Block { tokens: Vec::new() };
-                            let block_key = tokens_map.insert(value_block);
+                            let value_block = ParserObject::Block {
+                                objects: Vec::new(),
+                            };
+                            let block_key = parser.insert(value_block);
 
-                            let if_def = Token::IfDef {
+                            let if_def = ParserObject::IfDef {
                                 block_value: block_key,
                                 condition_block: expr_block_key,
                             };
-                            let if_key = tokens_map.insert(if_def);
+                            let if_key = parser.insert(if_def);
 
-                            let current_block = tokens_map.get_mut(current_block).unwrap();
-                            current_block.add_token(if_key);
+                            let current_block = parser.get_mut(current_block).unwrap();
+                            current_block.add_object(if_key);
 
                             block_indexes.push((block_key, BlockType::FuncValue));
                             block_indexes.push((expr_block_key, BlockType::FuncCall));
 
                             last_action = PerfomedAction::CalledFunction;
                         } else if item_name == "fn" {
-                            let args_block = Token::Block { tokens: Vec::new() };
-                            let args_block_key = tokens_map.insert(args_block);
+                            let args_block = ParserObject::Block {
+                                objects: Vec::new(),
+                            };
+                            let args_block_key = parser.insert(args_block);
 
-                            let value_block = Token::Block { tokens: Vec::new() };
-                            let block_key = tokens_map.insert(value_block);
+                            let value_block = ParserObject::Block {
+                                objects: Vec::new(),
+                            };
+                            let block_key = parser.insert(value_block);
 
-                            let fn_def = Token::FnDef {
+                            let fn_def = ParserObject::FnDef {
                                 block_value: block_key,
                                 arguments_block: args_block_key,
                             };
-                            let fn_key = tokens_map.insert(fn_def);
+                            let fn_key = parser.insert(fn_def);
 
-                            let current_block = tokens_map.get_mut(current_block).unwrap();
-                            current_block.add_token(fn_key);
+                            let current_block = parser.get_mut(current_block).unwrap();
+                            current_block.add_object(fn_key);
 
                             block_indexes.push((block_key, BlockType::FuncValue));
                             block_indexes.push((args_block_key, BlockType::FuncCall));
 
                             last_action = PerfomedAction::CalledFunction;
                         } else {
-                            let value_block = Token::Block { tokens: Vec::new() };
-                            let block_key = tokens_map.insert(value_block);
+                            let value_block = ParserObject::Block {
+                                objects: Vec::new(),
+                            };
+                            let block_key = parser.insert(value_block);
 
-                            let fn_call_def = Token::FunctionCall {
+                            let fn_call_def = ParserObject::FunctionCall {
                                 fn_name: item_name,
                                 arguments: block_key,
                             };
-                            let fn_call_key = tokens_map.insert(fn_call_def);
+                            let fn_call_key = parser.insert(fn_call_def);
 
-                            let current_block = tokens_map.get_mut(current_block).unwrap();
-                            current_block.add_token(fn_call_key);
+                            let current_block = parser.get_mut(current_block).unwrap();
+                            current_block.add_object(fn_call_key);
 
                             block_indexes.push((block_key, BlockType::FuncCall));
 
@@ -347,11 +366,11 @@ pub mod tokenizer {
                             .map(|v| v.to_string())
                             .collect::<Vec<String>>();
 
-                        let var_ref = Token::PropertyRef { path };
-                        let var_ref_key = tokens_map.insert(var_ref);
+                        let var_ref = ParserObject::PropertyRef { path };
+                        let var_ref_key = parser.insert(var_ref);
 
-                        let current_block = tokens_map.get_mut(current_block).unwrap();
-                        current_block.add_token(var_ref_key);
+                        let current_block = parser.get_mut(current_block).unwrap();
+                        current_block.add_object(var_ref_key);
 
                         last_action = PerfomedAction::ReferencedVariable;
 
@@ -361,12 +380,12 @@ pub mod tokenizer {
                         let item_val = format!("{val}{item_val}");
 
                         if let Ok(value) = item_val.parse::<usize>() {
-                            let number_val = Token::NumberVal { value };
+                            let number_val = ParserObject::NumberVal { value };
 
-                            let number_val_key = tokens_map.insert(number_val);
+                            let number_val_key = parser.insert(number_val);
 
-                            let current_block = tokens_map.get_mut(current_block).unwrap();
-                            current_block.add_token(number_val_key);
+                            let current_block = parser.get_mut(current_block).unwrap();
+                            current_block.add_object(number_val_key);
 
                             last_action = PerfomedAction::FoundNumber;
                         }
@@ -376,13 +395,13 @@ pub mod tokenizer {
                         let item_name = slice_until_delimeter(&mut chars);
                         let item_name = format!("{val}{item_name}");
 
-                        let var_ref = Token::VarRef {
+                        let var_ref = ParserObject::VarRef {
                             var_name: item_name,
                         };
-                        let var_ref_key = tokens_map.insert(var_ref);
+                        let var_ref_key = parser.insert(var_ref);
 
-                        let current_block = tokens_map.get_mut(current_block).unwrap();
-                        current_block.add_token(var_ref_key);
+                        let current_block = parser.get_mut(current_block).unwrap();
+                        current_block.add_object(var_ref_key);
 
                         last_action = PerfomedAction::ReferencedVariable;
 
@@ -392,15 +411,15 @@ pub mod tokenizer {
             }
         }
 
-        /// Retrieve the global block token
-        pub fn get_global(&self) -> TokenKey {
+        /// Retrieve the global block object
+        pub fn get_global(&self) -> ParserObjectKey {
             self.global_block
         }
 
-        /// Retrieve a Token given a `key`
+        /// Retrieve a ParserObject given a `key`
         #[inline(always)]
-        pub fn get_token(&self, key: TokenKey) -> Option<&Token> {
-            self.tokens.get(key)
+        pub fn get_object(&self, key: ParserObjectKey) -> Option<&ParserObject> {
+            self.objects.get(key)
         }
     }
 }
@@ -423,33 +442,33 @@ pub mod runtime {
 
     use slab::Slab;
 
-    use crate::tokenizer::{Token, Tokenizer};
+    use crate::parser::{Parser, ParserObject};
 
     pub type LenarResult<T> = Result<T, LenarError>;
 
-    /// A interpreter given a Tokenizer
+    /// A interpreter given a Parser
     pub struct Runtime;
 
     impl Runtime {
         pub fn run_with_scope<'a>(
-            context: &mut Scope<'a>,
-            tokenizer: &'a Arc<Tokenizer>,
+            scope: &mut Scope<'a>,
+            parser: &'a Arc<Parser>,
         ) -> LenarResult<LenarValue<'a>> {
-            let global_block = tokenizer.get_token(tokenizer.get_global()).unwrap();
-            evaluate_expression(global_block, tokenizer, context, &[])
+            let global_block = parser.get_object(parser.get_global()).unwrap();
+            evaluate_object(global_block, parser, scope, &[])
         }
 
         /// Evaluate the runtime code and return the exit value
-        pub fn evaluate(tokenizer: &Arc<Tokenizer>) -> LenarResult<LenarValue> {
-            let mut context = Scope::default();
-            context.setup_globals();
+        pub fn evaluate(parser: &Arc<Parser>) -> LenarResult<LenarValue> {
+            let mut scope = Scope::default();
+            scope.setup_globals();
 
-            Self::run_with_scope(&mut context, tokenizer)
+            Self::run_with_scope(&mut scope, parser)
         }
 
         pub fn run(code: &str) {
-            let tokenizer = Arc::new(Tokenizer::new(code));
-            Self::evaluate(&tokenizer).ok();
+            let parser = Arc::new(Parser::new(code));
+            Self::evaluate(&parser).ok();
         }
     }
 
@@ -473,7 +492,7 @@ pub mod runtime {
     #[derive(Debug, Clone)]
     pub enum LenarError {
         VariableNotFound(String),
-        WrongValue(String)
+        WrongValue(String),
     }
 
     #[derive(Debug, Clone, Default)]
@@ -574,6 +593,7 @@ pub mod runtime {
         }
     }
 
+    /// Lenar special objects base
     pub trait RuntimeInstance<'a>: Debug {
         fn get_props(&self, path: &mut Iter<String>) -> LenarValue<'a> {
             let prop = path.next();
@@ -589,26 +609,29 @@ pub mod runtime {
         fn get_name<'s>(&self) -> &'s str;
     }
 
+    /// Lenar function base trait
     pub trait RuntimeFunction: Debug {
+        /// Call the runtime function implementation
         fn call<'s>(
             &mut self,
             _args: Vec<LenarValue<'s>>,
-            tokens_map: &'s Arc<Tokenizer>,
+            parser: &'s Arc<Parser>,
         ) -> LenarResult<LenarValue<'s>>;
 
+        /// Get the function name
         fn get_name<'s>(&self) -> &'s str;
     }
 
     /// Runtime Scope that includes variables and nested Scopes.
     #[derive(Default)]
     pub struct Scope<'a> {
-        locks: Arc<Mutex<Slab<JoinHandle<()>>>>,
+        thread_locks: Arc<Mutex<Slab<JoinHandle<()>>>>,
         variables: HashMap<String, LenarValue<'a>>,
         scopes: HashMap<usize, Scope<'a>>,
     }
 
     impl<'a> Scope<'a> {
-        /// Add an instance to the global scope
+        /// Add a [`RuntimeInstance`] to the global scope
         pub fn add_global_instance(&mut self, val: impl RuntimeInstance<'a> + 'static) {
             self.variables.insert(
                 val.get_name().to_owned(),
@@ -616,7 +639,7 @@ pub mod runtime {
             );
         }
 
-        /// Add a function to the global scope
+        /// Add a [`RuntimeFunction`] to the global scope
         pub fn add_global_function(&mut self, val: impl RuntimeFunction + 'static) {
             self.variables.insert(
                 val.get_name().to_owned(),
@@ -624,7 +647,7 @@ pub mod runtime {
             );
         }
 
-        /// Define global utilities
+        /// Define the global variables
         pub fn setup_globals(&mut self) {
             let resources_files = Rc::new(RefCell::new(Slab::<File>::new()));
 
@@ -643,7 +666,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     match args[0] {
                         LenarValue::Usize(rid) => {
@@ -677,7 +700,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     let file_path = args[0].as_bytes().unwrap();
                     let file_path = from_utf8(file_path).unwrap();
@@ -758,7 +781,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     for val in args {
                         Self::write(&val);
@@ -780,7 +803,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     for val in args {
                         PrintFunc::write(&val);
@@ -803,7 +826,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     let args = args.get(0).zip(args.get(1));
                     let res = if let Some((a, b)) = args {
@@ -827,7 +850,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     Ok(LenarValue::List(args))
                 }
@@ -853,7 +876,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     let iterator = args.remove(0);
                     let fun = args.remove(0);
@@ -868,7 +891,7 @@ pub mod runtime {
 
                                 for byte in bytes {
                                     if let Ok(byte) = byte {
-                                        fun.call(vec![LenarValue::Bytes(&[byte])], _tokens_map)?;
+                                        fun.call(vec![LenarValue::Bytes(&[byte])], _parser)?;
                                     } else {
                                         break;
                                     }
@@ -876,17 +899,17 @@ pub mod runtime {
                             }
                             LenarValue::Bytes(bytes) => {
                                 for byte in bytes {
-                                    fun.call(vec![LenarValue::Bytes(&[*byte])], _tokens_map)?;
+                                    fun.call(vec![LenarValue::Bytes(&[*byte])], _parser)?;
                                 }
                             }
                             LenarValue::OwnedBytes(bytes) => {
                                 for byte in bytes {
-                                    fun.call(vec![LenarValue::Bytes(&[byte])], _tokens_map)?;
+                                    fun.call(vec![LenarValue::Bytes(&[byte])], _parser)?;
                                 }
                             }
                             LenarValue::List(items) => {
                                 for (i, item) in items.into_iter().enumerate() {
-                                    fun.call(vec![item, LenarValue::Usize(i)], _tokens_map)?;
+                                    fun.call(vec![item, LenarValue::Usize(i)], _parser)?;
                                 }
                             }
                             _ => {}
@@ -909,13 +932,13 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
-                    tokens_map: &'s Arc<Tokenizer>,
+                    parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     let fun = args.remove(0);
 
                     if let LenarValue::Function(mut fun) = fun {
                         let fun = Rc::get_mut(&mut fun).unwrap();
-                        fun.call(args, tokens_map)?;
+                        fun.call(args, parser)?;
                     }
 
                     Ok(LenarValue::Void)
@@ -934,7 +957,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     let v = args.remove(0);
                     if let LenarValue::Usize(time) = v {
@@ -962,7 +985,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     let v = args.remove(0);
                     if let LenarValue::Usize(rid) = v {
@@ -985,7 +1008,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     let v = args.remove(0);
                     Ok(LenarValue::Enum(LenarEnum::new_with_variant("Ok", v)))
@@ -1004,7 +1027,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     let v = args.remove(0);
                     Ok(LenarValue::Enum(LenarEnum::new_with_variant("Err", v)))
@@ -1023,7 +1046,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     let v = args.remove(0);
                     match v {
@@ -1048,7 +1071,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     let value = args.remove(0);
                     match value {
@@ -1073,7 +1096,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     let value = args.remove(0);
                     match value {
@@ -1098,7 +1121,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     let v = args.remove(0);
                     Ok(LenarValue::Ref(Rc::new(RefCell::new(v))))
@@ -1117,7 +1140,7 @@ pub mod runtime {
                 fn call<'s>(
                     &mut self,
                     mut args: Vec<LenarValue<'s>>,
-                    _tokens_map: &'s Arc<Tokenizer>,
+                    _parser: &'s Arc<Parser>,
                 ) -> LenarResult<LenarValue<'s>> {
                     let value = args.remove(0);
                     let increment = args.remove(0);
@@ -1157,7 +1180,7 @@ pub mod runtime {
                 .insert("Ok".to_string(), LenarValue::Function(Rc::new(OkFunc)));
             self.variables.insert(
                 "wait".to_string(),
-                LenarValue::Function(Rc::new(WaitFunc::new(self.locks.clone()))),
+                LenarValue::Function(Rc::new(WaitFunc::new(self.thread_locks.clone()))),
             );
             self.variables.insert(
                 "sleep".to_string(),
@@ -1201,6 +1224,7 @@ pub mod runtime {
             );
         }
 
+        /// Get a mutable handle scope to the desired [`Scope`]
         pub fn get_scope(&mut self, path: &mut Iter<usize>) -> &mut Scope<'a> {
             let scope = path.next();
 
@@ -1211,6 +1235,7 @@ pub mod runtime {
             }
         }
 
+        /// Get a mutable handle to the desired [`RuntimeFunction`]
         pub fn get_function(
             &mut self,
             name: impl AsRef<str>,
@@ -1242,14 +1267,14 @@ pub mod runtime {
             name: impl AsRef<str>,
             path: &mut Iter<usize>,
             args: Vec<LenarValue<'a>>,
-            tokens_map: &'a Arc<Tokenizer>,
+            parser: &'a Arc<Parser>,
         ) -> LenarResult<LenarValue<'a>> {
             let func_name = name.as_ref().to_string();
             let func = self.get_function(name, path);
 
             if let Some(func) = func {
                 let func = Rc::get_mut(func).unwrap();
-                func.call(args, tokens_map)
+                func.call(args, parser)
             } else {
                 Err(LenarError::VariableNotFound(func_name))
             }
@@ -1259,10 +1284,10 @@ pub mod runtime {
         pub fn define_variable(
             &mut self,
             name: impl AsRef<str>,
-            scope_id: &[usize],
+            scope_path: &[usize],
             value: LenarValue<'a>,
         ) {
-            let scope = self.get_scope(&mut scope_id.iter());
+            let scope = self.get_scope(&mut scope_path.iter());
             scope.variables.insert(name.as_ref().to_string(), value);
         }
 
@@ -1341,35 +1366,35 @@ pub mod runtime {
         }
     }
 
-    /// Evaluate an expression to a value
-    fn evaluate_expression<'a>(
-        token: &'a Token,
-        tokens_map: &'a Arc<Tokenizer>,
+    /// Evaluate a [`ParserObject`] to a [`LenarValue`]
+    fn evaluate_object<'a>(
+        object: &'a ParserObject,
+        parser: &'a Arc<Parser>,
         scope: &mut Scope<'a>,
         scope_path: &[usize],
     ) -> LenarResult<LenarValue<'a>> {
-        match token {
-            Token::Block { tokens } => {
+        match object {
+            ParserObject::Block { objects } => {
                 let mut next_scope_id = scope_path.last().copied().unwrap_or(0);
 
-                for (i, tok) in tokens.iter().enumerate() {
-                    let is_last = i == tokens.len() - 1;
-                    let tok = tokens_map.get_token(*tok).unwrap();
-                    let res = if matches!(tok, Token::Block { .. }) {
+                for (i, tok) in objects.iter().enumerate() {
+                    let is_last = i == objects.len() - 1;
+                    let tok = parser.get_object(*tok).unwrap();
+                    let res = if matches!(tok, ParserObject::Block { .. }) {
                         next_scope_id += 1;
                         // Create block scope
                         scope.create_scope(scope_path, next_scope_id);
 
                         // Run the block expression in the new scope
                         let scope_path = &[scope_path, &[next_scope_id]].concat();
-                        let return_val = evaluate_expression(tok, tokens_map, scope, scope_path);
+                        let return_val = evaluate_object(tok, parser, scope, scope_path);
 
                         // Remove the scope
                         scope.drop_scope(scope_path, next_scope_id);
                         return_val
                     } else {
                         // Run the expression in the inherited scope
-                        evaluate_expression(tok, tokens_map, scope, scope_path)
+                        evaluate_object(tok, parser, scope, scope_path)
                     };
 
                     // Return the returned value from the expression as result of this block
@@ -1380,64 +1405,67 @@ pub mod runtime {
 
                 Ok(LenarValue::Void)
             }
-            Token::VarDef {
+            ParserObject::VarDef {
                 var_name,
                 block_value,
             } => {
-                let value = tokens_map.get_token(*block_value).unwrap();
-                let res = evaluate_expression(value, tokens_map, scope, scope_path)?;
+                let value = parser.get_object(*block_value).unwrap();
+                let res = evaluate_object(value, parser, scope, scope_path)?;
                 scope.define_variable(var_name, scope_path, res);
 
                 Ok(LenarValue::Void)
             }
-            Token::FunctionCall { arguments, fn_name } => {
+            ParserObject::FunctionCall { arguments, fn_name } => {
                 if fn_name == "thread" {
-                    let tokens_map = tokens_map.clone();
+                    let parser = parser.clone();
                     let arguments = *arguments;
                     let fn_name = fn_name.clone();
 
                     let handle = thread::spawn(move || {
-                        let mut context = Scope::default();
+                        let mut scope = Scope::default();
 
-                        context.setup_globals();
-                        let value = tokens_map.get_token(arguments).unwrap();
+                        scope.setup_globals();
+                        let value = parser.get_object(arguments).unwrap();
                         let mut args = Vec::new();
-                        if let Token::Block { tokens } = value {
-                            for tok in tokens {
-                                let tok = tokens_map.get_token(*tok).unwrap();
-                                let res = evaluate_expression(tok, &tokens_map, &mut context, &[])
-                                    .unwrap();
+                        if let ParserObject::Block { objects } = value {
+                            for tok in objects {
+                                let tok = parser.get_object(*tok).unwrap();
+                                let res = evaluate_object(tok, &parser, &mut scope, &[]).unwrap();
 
                                 args.push(res);
                             }
                         }
 
-                        context
-                            .call_function(fn_name, &mut [].iter(), args, &tokens_map)
+                        scope
+                            .call_function(fn_name, &mut [].iter(), args, &parser)
                             .unwrap();
                     });
-                    let id = scope.locks.lock().unwrap().insert(handle);
+                    let id = scope.thread_locks.lock().unwrap().insert(handle);
                     Ok(LenarValue::Usize(id))
                 } else {
-                    let value = tokens_map.get_token(*arguments).unwrap();
+                    let value = parser.get_object(*arguments).unwrap();
                     let mut args = Vec::new();
-                    if let Token::Block { tokens } = value {
-                        for tok in tokens {
-                            let tok = tokens_map.get_token(*tok).unwrap();
-                            let res = evaluate_expression(tok, tokens_map, scope, scope_path)?;
+                    if let ParserObject::Block { objects } = value {
+                        for tok in objects {
+                            let tok = parser.get_object(*tok).unwrap();
+                            let res = evaluate_object(tok, parser, scope, scope_path)?;
 
                             args.push(res);
                         }
                     }
 
-                    scope.call_function(fn_name, &mut scope_path.iter(), args, tokens_map)
+                    scope.call_function(fn_name, &mut scope_path.iter(), args, parser)
                 }
             }
-            Token::StringVal { value } => Ok(LenarValue::Str(value)),
-            Token::BytesVal { value } => Ok(LenarValue::Bytes(value)),
-            Token::VarRef { var_name } => scope.get_variable(var_name, &mut scope_path.iter()),
-            Token::PropertyRef { path } => scope.get_variable_by_path(path, &mut scope_path.iter()),
-            Token::FnDef {
+            ParserObject::StringVal { value } => Ok(LenarValue::Str(value)),
+            ParserObject::BytesVal { value } => Ok(LenarValue::Bytes(value)),
+            ParserObject::VarRef { var_name } => {
+                scope.get_variable(var_name, &mut scope_path.iter())
+            }
+            ParserObject::PropertyRef { path } => {
+                scope.get_variable_by_path(path, &mut scope_path.iter())
+            }
+            ParserObject::FnDef {
                 arguments_block,
                 block_value,
             } => {
@@ -1452,31 +1480,31 @@ pub mod runtime {
                     fn call<'s>(
                         &mut self,
                         mut args: Vec<LenarValue<'s>>,
-                        tokens_map: &'s Arc<Tokenizer>,
+                        parser: &'s Arc<Parser>,
                     ) -> LenarResult<LenarValue<'s>> {
                         // Anonymous functions do not inherit any scope,
                         // instead, they only have their own global scope,
                         // This means, you cannot reference variables from outside
                         // this scope, you can pass them as arguments though.
-                        let mut context = Scope::default();
+                        let mut scope = Scope::default();
 
-                        context.setup_globals();
+                        scope.setup_globals();
 
                         // Define each argument as a variable in the function scope
-                        let arguments_block = tokens_map.get_token(self.arguments_block).unwrap();
-                        if let Token::Block { tokens } = arguments_block {
-                            for token in tokens {
-                                let arg_token = tokens_map.get_token(*token).unwrap();
-                                if let Token::VarRef { var_name } = arg_token {
+                        let arguments_block = parser.get_object(self.arguments_block).unwrap();
+                        if let ParserObject::Block { objects } = arguments_block {
+                            for object in objects {
+                                let arg_object = parser.get_object(*object).unwrap();
+                                if let ParserObject::VarRef { var_name } = arg_object {
                                     let arg_value = args.remove(0);
-                                    context.variables.insert(var_name.to_owned(), arg_value);
+                                    scope.variables.insert(var_name.to_owned(), arg_value);
                                 }
                             }
                         }
 
-                        let block_token = tokens_map.get_token(self.block_value).unwrap();
+                        let block_object = parser.get_object(self.block_value).unwrap();
 
-                        evaluate_expression(block_token, tokens_map, &mut context, &[])
+                        evaluate_object(block_object, parser, &mut scope, &[])
                     }
 
                     fn get_name<'s>(&self) -> &'s str {
@@ -1488,23 +1516,23 @@ pub mod runtime {
                     block_value: *block_value,
                 })))
             }
-            Token::IfDef {
+            ParserObject::IfDef {
                 condition_block: expr,
                 block_value,
             } => {
-                let expr_token = tokens_map.get_token(*expr).unwrap();
-                let expr_res = evaluate_expression(expr_token, tokens_map, scope, scope_path)?;
+                let expr_object = parser.get_object(*expr).unwrap();
+                let expr_res = evaluate_object(expr_object, parser, scope, scope_path)?;
 
                 // If the condition expression returns a `true` it
                 // will evaluate the actual block
                 if LenarValue::Bool(true) == expr_res {
-                    let expr_body_token = tokens_map.get_token(*block_value).unwrap();
-                    evaluate_expression(expr_body_token, tokens_map, scope, scope_path)
+                    let expr_body_object = parser.get_object(*block_value).unwrap();
+                    evaluate_object(expr_body_object, parser, scope, scope_path)
                 } else {
                     Ok(LenarValue::Void)
                 }
             }
-            Token::NumberVal { value } => Ok(LenarValue::Usize(*value)),
+            ParserObject::NumberVal { value } => Ok(LenarValue::Usize(*value)),
         }
     }
 }

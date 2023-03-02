@@ -1,8 +1,8 @@
 use lenar::*;
 
 fn main() {
+    use parser::*;
     use runtime::*;
-    use tokenizer::*;
 
     let code = r#"
 
@@ -27,11 +27,11 @@ fn main() {
         println(value);
     "#;
 
-    let tokenizer = Tokenizer::new(&code).wrap();
+    let parser = Parser::new(&code).wrap();
 
-    Runtime::evaluate(&tokenizer).unwrap();
+    Runtime::evaluate(&parser).unwrap();
 
-    let parser = Tokenizer::new(
+    let parser = Parser::new(
         r#"
         woow();
     "#,
