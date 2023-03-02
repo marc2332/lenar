@@ -1,4 +1,4 @@
-# 🌑 lenar -  interpreted programming language
+# 🌑 lenar - programming language
 
 ```rust
 if(isEqual("test" "test")) {

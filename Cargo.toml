@@ -2,6 +2,10 @@
 name = "lenar"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+authors = ["Marc Espín <mespinsanz@gmail.com>"]
+readme = "./readme.md"
+homepage = "https://github.com/marc2332/lenar"
 
 [dependencies]
 slab = "0.4"
