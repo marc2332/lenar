@@ -3,8 +3,8 @@ use std::sync::Arc;
 use lenar::*;
 
 fn main() {
+    use parser::*;
     use runtime::*;
-    use tokenizer::*;
 
     let code = r#"
         let file = openFile("examples/fs.rs");
@@ -20,7 +20,7 @@ fn main() {
         });
     "#;
 
-    let tokenizer = Arc::new(Tokenizer::new(&code));
+    let parser = Arc::new(Parser::new(&code));
 
-    Runtime::evaluate(&tokenizer).unwrap();
+    Runtime::evaluate(&parser).unwrap();
 }

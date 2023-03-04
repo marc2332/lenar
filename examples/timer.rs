@@ -1,9 +1,9 @@
 use std::time::Instant;
 
-use lenar::tokenizer;
+use lenar::parser;
 
 fn main() {
-    use tokenizer::*;
+    use parser::*;
 
     let now = Instant::now();
 
@@ -15,7 +15,7 @@ fn main() {
     "#
     .repeat(10000000);
 
-    Tokenizer::new(&code);
+    Parser::new(&code);
 
     println!("{}s", now.elapsed().as_secs_f32());
 }
