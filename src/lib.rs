@@ -1344,9 +1344,11 @@ pub mod runtime {
                     .scopes
                     .get_mut(scope)
                     .unwrap()
-                    .get_variable_by_path(var_path, path)?;
-                if !result.is_void() {
-                    return Ok(result);
+                    .get_variable_by_path(var_path, path);
+                if let Ok(result) = result {
+                    if !result.is_void() {
+                        return Ok(result);
+                    }
                 }
             }
 
