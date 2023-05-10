@@ -21,6 +21,5 @@ println(if(isEqual("test" "test")) { "wow" });
 - Lightweight
 - Simple multithreading
 - Non-garbage collected
-- Rust-inspired syntax
 
 [MIT License](./LICENSE.md)
