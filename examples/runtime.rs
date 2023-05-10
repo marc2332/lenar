@@ -30,13 +30,4 @@ fn main() {
     let parser = Parser::new(&code).wrap();
 
     Runtime::evaluate(&parser).unwrap();
-
-    let parser = Parser::new(
-        r#"
-        woow();
-    "#,
-    )
-    .wrap();
-
-    println!("{:?}", Runtime::evaluate(&parser));
 }

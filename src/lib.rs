@@ -520,7 +520,7 @@ pub mod runtime {
                 &self
                     .0
                     .iter()
-                    .map(|(k, v)| format!("{k}: {v}"))
+                    .map(|(k, v)| format!("{k}({v})"))
                     .collect::<Vec<String>>()
                     .join("\n"),
             )
@@ -585,9 +585,10 @@ pub mod runtime {
             }
         }
 
-        pub fn as_integer(&self) -> Option<&usize> {
+        pub fn as_integer(&self) -> Option<usize> {
             match self {
-                Self::Usize(v) => Some(v),
+                Self::Usize(v) => Some(*v),
+                Self::Ref(v) => v.borrow().as_integer(),
                 _ => None,
             }
         }
@@ -1144,15 +1145,21 @@ pub mod runtime {
                 ) -> LenarResult<LenarValue<'s>> {
                     let value = args.remove(0);
                     let increment = args.remove(0);
-                    if let LenarValue::Ref(value) = value {
-                        let mut value = value.borrow_mut();
-                        let value = value.as_integer_mut();
-                        let increment = increment.as_integer();
-                        if let Some((value, increment)) = value.zip(increment) {
-                            *value += increment;
+                    let result = match value {
+                        LenarValue::Ref(value) => {
+                            let mut value = value.borrow_mut();
+                            let value = value.as_integer_mut();
+                            let increment = increment.as_integer();
+                            if let Some((value, increment)) = value.zip(increment) {
+                                *value += increment;
+                                LenarValue::Usize(*value)
+                            } else {
+                                LenarValue::Void
+                            }
                         }
-                    }
-                    Ok(LenarValue::Void)
+                        _ => LenarValue::Void,
+                    };
+                    Ok(result)
                 }
 
                 fn get_name<'s>(&self) -> &'s str {
@@ -1298,14 +1305,17 @@ pub mod runtime {
             path: &mut Iter<usize>,
         ) -> LenarResult<LenarValue<'a>> {
             let scope = path.next();
+
             if let Some(scope) = scope {
                 let result = self
                     .scopes
                     .get_mut(scope)
                     .unwrap()
-                    .get_variable(name.as_ref(), path)?;
-                if !result.is_void() {
-                    return Ok(result);
+                    .get_variable(name.as_ref(), path);
+                if let Ok(result) = result {
+                    if !result.is_void() {
+                        return Ok(result);
+                    }
                 }
             }
 
@@ -1469,7 +1479,7 @@ pub mod runtime {
                 arguments_block,
                 block_value,
             } => {
-                // Anonymous function create at runtime
+                // Anonymous function created at runtime
                 #[derive(Debug)]
                 struct Function {
                     arguments_block: usize,

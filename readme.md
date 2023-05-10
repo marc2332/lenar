@@ -1,4 +1,8 @@
-# 🌑 lenar - programming language
+# 🌑 lenar
+
+lenar is a toy programming language
+
+> ⚠️ I am not an expert in this area.
 
 ```rust
 if(isEqual("test" "test")) {
@@ -12,10 +16,11 @@ if(isEqual("test" "test")) {
 println(if(isEqual("test" "test")) { "wow" });
 ```
 
-- Incredibly fast handcrafted parser
-- Minimal dependencies
-- Easy to embed
+- 1 dependency
+- Easy to embed and extend
 - Lightweight
 - Simple multithreading
+- Non-garbage collected
+- Rust-inspired syntax
 
 [MIT License](./LICENSE.md)
