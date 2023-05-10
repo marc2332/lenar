@@ -1,6 +1,6 @@
 # 🌑 lenar
 
-lenar is a toy programming language
+lenar is a interpreted and toy programming language, written in Rust 🦀
 
 > ⚠️ I am not an expert in this area.
 
