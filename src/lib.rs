@@ -75,7 +75,7 @@ pub mod parser {
 
     #[inline(always)]
     fn slice_until_delimeter(chars: &mut Peekable<Chars>) -> String {
-        let until = [',', ';', ')', '}', ' ', '\n'];
+        let until = [',', ';', ')', '}', ' ', '\n', '\r'];
         let mut s = String::new();
         while let Some(c) = chars.next_if(|v| !until.contains(v)) {
             s.push_str(&c.to_string());
@@ -167,7 +167,8 @@ pub mod parser {
                 }
 
                 // Skip spaces and line breaks
-                if string_count == 0 && (val == Some(' ') || val == Some('\n')) {
+                if string_count == 0 && (val == Some(' ') || val == Some('\n')) || val == Some('\r')
+                {
                     continue;
                 }
 
