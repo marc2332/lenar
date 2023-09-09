@@ -483,7 +483,7 @@ pub mod runtime {
         Void,
         Bool(bool),
         Instance(Rc<RefCell<dyn RuntimeInstance<'a>>>),
-        Function(Rc<dyn RuntimeFunction>),
+        Function(Rc<RefCell<dyn RuntimeFunction>>),
         Enum(LenarEnum<'a>),
         Ref(Rc<RefCell<LenarValue<'a>>>),
     }
@@ -541,7 +541,7 @@ pub mod runtime {
                 LenarValue::Void => f.write_str("Void"),
                 LenarValue::Bool(b) => f.write_str(&format!("{b}")),
                 LenarValue::Instance(i) => f.write_str(i.borrow().get_name()),
-                LenarValue::Function(func) => f.write_str(func.get_name()),
+                LenarValue::Function(func) => f.write_str(func.borrow().get_name()),
                 LenarValue::Enum(en) => f.write_str(&en.to_string()),
                 LenarValue::Ref(r) => f.write_str(&r.borrow().to_string()),
             }
@@ -644,7 +644,7 @@ pub mod runtime {
         pub fn add_global_function(&mut self, val: impl RuntimeFunction + 'static) {
             self.variables.insert(
                 val.get_name().to_owned(),
-                LenarValue::Function(Rc::new(val)),
+                LenarValue::Function(Rc::new(RefCell::new(val))),
             );
         }
 
@@ -748,7 +748,7 @@ pub mod runtime {
                             stdout().write(bts).ok();
                         }
                         LenarValue::Function(func) => {
-                            stdout().write(func.get_name().as_bytes()).ok();
+                            stdout().write(func.borrow().get_name().as_bytes()).ok();
                         }
                         LenarValue::Instance(instance) => {
                             stdout().write(instance.borrow().get_name().as_bytes()).ok();
@@ -882,8 +882,8 @@ pub mod runtime {
                     let iterator = args.remove(0);
                     let fun = args.remove(0);
 
-                    if let LenarValue::Function(mut fun) = fun {
-                        let fun = Rc::get_mut(&mut fun).unwrap();
+                    if let LenarValue::Function(fun) = fun {
+                        let mut fun = fun.borrow_mut();
                         match iterator {
                             LenarValue::Usize(rid) => {
                                 let resources_files = self.resources_files.borrow_mut();
@@ -937,8 +937,8 @@ pub mod runtime {
                 ) -> LenarResult<LenarValue<'s>> {
                     let fun = args.remove(0);
 
-                    if let LenarValue::Function(mut fun) = fun {
-                        let fun = Rc::get_mut(&mut fun).unwrap();
+                    if let LenarValue::Function(fun) = fun {
+                        let mut fun = fun.borrow_mut();
                         fun.call(args, parser)?;
                     }
 
@@ -1167,59 +1167,75 @@ pub mod runtime {
                 }
             }
 
-            self.variables
-                .insert("add".to_string(), LenarValue::Function(Rc::new(AddFunc)));
-            self.variables
-                .insert("ref".to_string(), LenarValue::Function(Rc::new(RefFunc)));
+            self.variables.insert(
+                "add".to_string(),
+                LenarValue::Function(Rc::new(RefCell::new(AddFunc))),
+            );
+            self.variables.insert(
+                "ref".to_string(),
+                LenarValue::Function(Rc::new(RefCell::new(RefFunc))),
+            );
             self.variables.insert(
                 "unwrapErr".to_string(),
-                LenarValue::Function(Rc::new(UnwrapErrFunc)),
+                LenarValue::Function(Rc::new(RefCell::new(UnwrapErrFunc))),
             );
             self.variables.insert(
                 "unwrap".to_string(),
-                LenarValue::Function(Rc::new(UnwrapFunc)),
+                LenarValue::Function(Rc::new(RefCell::new(UnwrapFunc))),
             );
-            self.variables
-                .insert("Err".to_string(), LenarValue::Function(Rc::new(ErrFunc)));
-            self.variables
-                .insert("isOk".to_string(), LenarValue::Function(Rc::new(IsOkFunc)));
-            self.variables
-                .insert("Ok".to_string(), LenarValue::Function(Rc::new(OkFunc)));
+            self.variables.insert(
+                "Err".to_string(),
+                LenarValue::Function(Rc::new(RefCell::new(ErrFunc))),
+            );
+            self.variables.insert(
+                "isOk".to_string(),
+                LenarValue::Function(Rc::new(RefCell::new(IsOkFunc))),
+            );
+            self.variables.insert(
+                "Ok".to_string(),
+                LenarValue::Function(Rc::new(RefCell::new(OkFunc))),
+            );
             self.variables.insert(
                 "wait".to_string(),
-                LenarValue::Function(Rc::new(WaitFunc::new(self.thread_locks.clone()))),
+                LenarValue::Function(Rc::new(RefCell::new(WaitFunc::new(
+                    self.thread_locks.clone(),
+                )))),
             );
             self.variables.insert(
                 "sleep".to_string(),
-                LenarValue::Function(Rc::new(SleepFunc)),
+                LenarValue::Function(Rc::new(RefCell::new(SleepFunc))),
             );
             self.variables.insert(
                 "thread".to_string(),
-                LenarValue::Function(Rc::new(ThreadFunc)),
+                LenarValue::Function(Rc::new(RefCell::new(ThreadFunc))),
             );
             self.variables.insert(
                 "newList".to_string(),
-                LenarValue::Function(Rc::new(NewListFunc)),
+                LenarValue::Function(Rc::new(RefCell::new(NewListFunc))),
             );
             self.variables.insert(
                 "iter".to_string(),
-                LenarValue::Function(Rc::new(IterFunc::new(resources_files.clone()))),
+                LenarValue::Function(Rc::new(RefCell::new(IterFunc::new(
+                    resources_files.clone(),
+                )))),
             );
             self.variables.insert(
                 "toString".to_string(),
-                LenarValue::Function(Rc::new(ToStringFunc::new(resources_files.clone()))),
+                LenarValue::Function(Rc::new(RefCell::new(ToStringFunc::new(
+                    resources_files.clone(),
+                )))),
             );
             self.variables.insert(
                 "openFile".to_string(),
-                LenarValue::Function(Rc::new(OpenFileFunc::new(resources_files))),
+                LenarValue::Function(Rc::new(RefCell::new(OpenFileFunc::new(resources_files)))),
             );
             self.variables.insert(
                 "print".to_string(),
-                LenarValue::Function(Rc::new(PrintFunc)),
+                LenarValue::Function(Rc::new(RefCell::new(PrintFunc))),
             );
             self.variables.insert(
                 "println".to_string(),
-                LenarValue::Function(Rc::new(PrintLnFunc)),
+                LenarValue::Function(Rc::new(RefCell::new(PrintLnFunc))),
             );
             self.variables.insert(
                 "Lenar".to_string(),
@@ -1227,7 +1243,7 @@ pub mod runtime {
             );
             self.variables.insert(
                 "isEqual".to_string(),
-                LenarValue::Function(Rc::new(IsEqual)),
+                LenarValue::Function(Rc::new(RefCell::new(IsEqual))),
             );
         }
 
@@ -1247,7 +1263,7 @@ pub mod runtime {
             &mut self,
             name: impl AsRef<str>,
             path: &mut Iter<usize>,
-        ) -> Option<&mut Rc<dyn RuntimeFunction>> {
+        ) -> Option<Rc<RefCell<dyn RuntimeFunction>>> {
             let scope = path.next();
             if let Some(scope) = scope {
                 let result = self
@@ -1260,9 +1276,9 @@ pub mod runtime {
                 }
             }
 
-            let func = self.variables.get_mut(name.as_ref());
+            let func = self.variables.get(name.as_ref());
             if let Some(LenarValue::Function(func)) = func {
-                Some(func)
+                Some(func.clone())
             } else {
                 None
             }
@@ -1280,7 +1296,7 @@ pub mod runtime {
             let func = self.get_function(name, path);
 
             if let Some(func) = func {
-                let func = Rc::get_mut(func).unwrap();
+                let mut func = func.borrow_mut();
                 func.call(args, parser)
             } else {
                 Err(LenarError::VariableNotFound(func_name))
@@ -1523,10 +1539,10 @@ pub mod runtime {
                         "Anonymous"
                     }
                 }
-                Ok(LenarValue::Function(Rc::new(Function {
+                Ok(LenarValue::Function(Rc::new(RefCell::new(Function {
                     arguments_block: *arguments_block,
                     block_value: *block_value,
-                })))
+                }))))
             }
             ParserObject::IfDef {
                 condition_block: expr,
