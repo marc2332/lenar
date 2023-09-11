@@ -1,17 +1,23 @@
-use lenar::runtime::*;
+use std::sync::Arc;
+
+use lenar::{runtime::*, parser::Parser};
 
 static CODE: &str = r#"
 
-let name = "Hello World!!";
-
-let iterator = fn(v) {
-    print(v);
+let a = fn() [] {
+    println("A");
 };
 
-iter(name iterator);
+let b = fn() [a] {
+    println("B");
+    a();
+};
+
+b();
 
 "#;
 
 fn main() {
-    Runtime::run(CODE);
+    let parser = Arc::new(Parser::new(CODE));
+    Runtime::evaluate(&parser).unwrap();
 }

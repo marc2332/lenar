@@ -24,6 +24,7 @@ pub mod parser {
         FnDef {
             arguments_block: ParserObjectKey,
             block_value: ParserObjectKey,
+            capture_value: ParserObjectKey
         },
         IfDef {
             condition_block: ParserObjectKey,
@@ -75,7 +76,7 @@ pub mod parser {
 
     #[inline(always)]
     fn slice_until_delimeter(chars: &mut Peekable<Chars>) -> String {
-        let until = [',', ';', ')', '}', ' ', '\n'];
+        let until = [',', ';', ')', '}', ' ', '\n', ']'];
         let mut s = String::new();
         while let Some(c) = chars.next_if(|v| !until.contains(v)) {
             s.push_str(&c.to_string());
@@ -112,6 +113,7 @@ pub mod parser {
         FuncCall,
         Value,
         FuncValue,
+        FuncCapture
     }
 
     impl Parser {
@@ -253,6 +255,13 @@ pub mod parser {
                     continue;
                 }
 
+                // Closing a capture area block
+                if val == ']' && string_count == 0 {
+                    block_indexes.pop();
+                    last_action = PerfomedAction::ClosedBlock;
+                    continue;
+                }
+
                 // Variable declarations
                 if string_count == 0 && slice_with_size(i, i + 3, code) == Some("let") {
                     advance_by(3, &mut chars);
@@ -319,14 +328,22 @@ pub mod parser {
                             };
                             let args_block_key = parser.insert(args_block);
 
+                            // Function body
                             let value_block = ParserObject::Block {
                                 objects: Vec::new(),
                             };
                             let block_key = parser.insert(value_block);
 
+                            // Function capture area
+                            let value_capture = ParserObject::Block {
+                                objects: Vec::new(),
+                            };
+                            let capture_key = parser.insert(value_capture);
+
                             let fn_def = ParserObject::FnDef {
                                 block_value: block_key,
                                 arguments_block: args_block_key,
+                                capture_value: capture_key
                             };
                             let fn_key = parser.insert(fn_def);
 
@@ -334,6 +351,7 @@ pub mod parser {
                             current_block.add_object(fn_key);
 
                             block_indexes.push((block_key, BlockType::FuncValue));
+                            block_indexes.push((capture_key, BlockType::FuncCapture));
                             block_indexes.push((args_block_key, BlockType::FuncCall));
 
                             last_action = PerfomedAction::CalledFunction;
@@ -1496,15 +1514,40 @@ pub mod runtime {
             ParserObject::FnDef {
                 arguments_block,
                 block_value,
+                capture_value
             } => {
+                let capture_area_value = parser.get_object(*capture_value);
+                
+                let capture_area = {
+                    let mut capture_area = HashMap::default();
+                    if let Some(ParserObject::Block { objects }) = capture_area_value {
+                        for object_key in objects {
+                            let object_value = parser.get_object(*object_key);
+                            if let Some(object_value) = object_value {
+                               if let ParserObject::VarRef { var_name } = object_value {
+                                let var = scope.get_variable(var_name, &mut scope_path.iter())?;
+                                let b = var.clone();
+                                capture_area.insert(var_name.clone(), LenarValue::Ref(Rc::new(RefCell::new(b))));
+                               }
+                               
+                            }
+                            
+                        }
+                    }
+                    capture_area
+                };
+
                 // Anonymous function created at runtime
                 #[derive(Debug)]
-                struct Function {
+                struct Function<'a> {
+                    capture_area: HashMap<String, LenarValue<'a>>,
                     arguments_block: usize,
                     block_value: usize,
                 }
 
-                impl RuntimeFunction for Function {
+                println!("{}", capture_value);
+
+                impl<'a> RuntimeFunction for Function<'a> {
                     fn call<'s>(
                         &mut self,
                         mut args: Vec<LenarValue<'s>>,
@@ -1540,6 +1583,7 @@ pub mod runtime {
                     }
                 }
                 Ok(LenarValue::Function(Rc::new(RefCell::new(Function {
+                    capture_area,
                     arguments_block: *arguments_block,
                     block_value: *block_value,
                 }))))
