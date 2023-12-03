@@ -21,7 +21,7 @@ fn main() {
     impl RuntimeInstance for CoolInstance {
         fn get_prop(&self, prop: &str) -> LenarValue {
             if prop == "hey" {
-                LenarValue::Bytes("hey".as_bytes().to_vec())
+                LenarValue::Str("hey".to_string())
             } else {
                 LenarValue::Void
             }

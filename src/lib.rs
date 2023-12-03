@@ -752,7 +752,7 @@ pub mod runtime {
             impl RuntimeInstance for LenarGlobal {
                 fn get_prop(&self, prop: &str) -> LenarValue {
                     match prop {
-                        "version" => LenarValue::Bytes("1.0.0".as_bytes().to_vec()),
+                        "version" => LenarValue::Str("1.0.0".to_string()),
                         _ => LenarValue::Void,
                     }
                 }
