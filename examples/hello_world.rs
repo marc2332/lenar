@@ -3,17 +3,18 @@ use std::sync::Arc;
 use lenar::{parser::Parser, runtime::*};
 
 static CODE: &str = r#"
+    println("Running -> " Lenar.version);
 
-    let a = fn() [] {
-        println("A");
+    let speak = fn(msg) [] {
+        println(msg);
+        "Hey!"
     };
 
-    let b = fn() [a] {
-        println("B");
-        a();
-    };
+    println(speak("Hello?"));
 
-    b();
+    if(isEqual(1 1)) {
+        println(speak("Hello again!"));
+    }
 "#;
 
 fn main() {
