@@ -18,16 +18,16 @@ fn main() {
     #[derive(Debug)]
     struct CoolInstance;
 
-    impl<'a> RuntimeInstance<'a> for CoolInstance {
-        fn get_prop(&self, prop: &str) -> LenarValue<'a> {
+    impl RuntimeInstance for CoolInstance {
+        fn get_prop(&self, prop: &str) -> LenarValue {
             if prop == "hey" {
-                LenarValue::Bytes("hey".as_bytes())
+                LenarValue::Str("hey".to_string())
             } else {
                 LenarValue::Void
             }
         }
 
-        fn get_name<'s>(&self) -> &'s str {
+        fn get_name(&self) -> &str {
             "coolInstance"
         }
     }
@@ -36,18 +36,18 @@ fn main() {
     struct CoolFunc;
 
     impl RuntimeFunction for CoolFunc {
-        fn call<'s>(
+        fn call(
             &mut self,
-            mut args: Vec<LenarValue<'s>>,
-            _objects_map: &'s Arc<Parser>,
-        ) -> LenarResult<LenarValue<'s>> {
+            mut args: Vec<LenarValue>,
+            _objects_map: &Arc<Parser>,
+        ) -> LenarResult<LenarValue> {
             let val = args.remove(0);
             let val = val.to_string();
             println!("{val}");
             Ok(LenarValue::Void)
         }
 
-        fn get_name<'s>(&self) -> &'s str {
+        fn get_name(&self) -> &str {
             "coolFunc"
         }
     }
