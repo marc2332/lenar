@@ -888,7 +888,7 @@ pub mod runtime {
                 }
 
                 fn get_name(&self) -> &str {
-                    "newList"
+                    "list"
                 }
             }
 
@@ -1252,7 +1252,7 @@ pub mod runtime {
                 LenarValue::Function(Rc::new(RefCell::new(ThreadFunc))),
             );
             self.variables.insert(
-                "newList".to_string(),
+                "list".to_string(),
                 LenarValue::Function(Rc::new(RefCell::new(NewListFunc))),
             );
             self.variables.insert(

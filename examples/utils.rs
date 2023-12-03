@@ -8,7 +8,7 @@ static CODE: &str = r#"
         iter(v fn(v) [] { print(v) })
     };
 
-    printIter(newList(1 2 3))
+    printIter(list(1 2 3))
 
 "#;
 
