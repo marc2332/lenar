@@ -1,20 +1,19 @@
 use std::sync::Arc;
 
-use lenar::{runtime::*, parser::Parser};
+use lenar::{parser::Parser, runtime::*};
 
 static CODE: &str = r#"
 
-let a = fn() [] {
-    println("A");
-};
+    let a = fn() [] {
+        println("A");
+    };
 
-let b = fn() [a] {
-    println("B");
-    a();
-};
+    let b = fn() [a] {
+        println("B");
+        a();
+    };
 
-b();
-
+    b();
 "#;
 
 fn main() {

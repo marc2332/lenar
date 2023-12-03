@@ -7,7 +7,7 @@ fn main() {
     let code = r#"
 
         if(isEqual("test" "test")) {
-            let something = fn(v) {
+            let something = fn(v) [] {
                 println(Lenar.version);
                 "hi"
             };
@@ -18,7 +18,7 @@ fn main() {
 
         let value = ref(0);
 
-        let modify = fn(v) {
+        let modify = fn(v) [] {
             add(v 5)
         };
 

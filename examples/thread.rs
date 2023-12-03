@@ -5,12 +5,12 @@ fn main() {
 
     let code = r#"
         let handle = thread(
-            fn(callback someOtherVal) {
+            fn(callback someOtherVal) [] {
                 callback(someOtherVal);
                 println("waiting 500ms");
                 sleep(500);
             } 
-            fn(v) { 
+            fn(v) [] { 
                 println(v); 
                 sleep(1000); 
             }

@@ -6,7 +6,7 @@ lenar is a interpreted and toy programming language, written in Rust 🦀
 
 ```rust
 if(isEqual("test" "test")) {
-    let something = fn(v) {
+    let something = fn(v) [] {
         println(Lenar.version);
         "hi"
     };

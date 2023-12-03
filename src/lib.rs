@@ -24,7 +24,7 @@ pub mod parser {
         FnDef {
             arguments_block: ParserObjectKey,
             block_value: ParserObjectKey,
-            capture_value: ParserObjectKey
+            capture_value: ParserObjectKey,
         },
         IfDef {
             condition_block: ParserObjectKey,
@@ -113,7 +113,7 @@ pub mod parser {
         FuncCall,
         Value,
         FuncValue,
-        FuncCapture
+        FuncCapture,
     }
 
     impl Parser {
@@ -255,6 +255,10 @@ pub mod parser {
                     continue;
                 }
 
+                if val == '[' && string_count == 0 {
+                    continue;
+                }
+
                 // Closing a capture area block
                 if val == ']' && string_count == 0 {
                     block_indexes.pop();
@@ -323,6 +327,7 @@ pub mod parser {
 
                             last_action = PerfomedAction::CalledFunction;
                         } else if item_name == "fn" {
+                            // Function args
                             let args_block = ParserObject::Block {
                                 objects: Vec::new(),
                             };
@@ -343,7 +348,7 @@ pub mod parser {
                             let fn_def = ParserObject::FnDef {
                                 block_value: block_key,
                                 arguments_block: args_block_key,
-                                capture_value: capture_key
+                                capture_value: capture_key,
                             };
                             let fn_key = parser.insert(fn_def);
 
@@ -468,10 +473,7 @@ pub mod runtime {
     pub struct Runtime;
 
     impl Runtime {
-        pub fn run_with_scope<'a>(
-            scope: &mut Scope<'a>,
-            parser: &'a Arc<Parser>,
-        ) -> LenarResult<LenarValue<'a>> {
+        pub fn run_with_scope(scope: &mut Scope, parser: &Arc<Parser>) -> LenarResult<LenarValue> {
             let global_block = parser.get_object(parser.get_global()).unwrap();
             evaluate_object(global_block, parser, scope, &[])
         }
@@ -492,18 +494,19 @@ pub mod runtime {
 
     /// Runtime values
     #[derive(Debug, Clone)]
-    pub enum LenarValue<'a> {
+    pub enum LenarValue {
         Usize(usize),
-        List(Vec<LenarValue<'a>>),
-        Str(&'a str),
-        Bytes(&'a [u8]),
+        List(Vec<LenarValue>),
+        Str(String),
+        Byte(u8),
+        Bytes(Vec<u8>),
         OwnedBytes(Vec<u8>),
         Void,
         Bool(bool),
-        Instance(Rc<RefCell<dyn RuntimeInstance<'a>>>),
+        Instance(Rc<RefCell<dyn RuntimeInstance>>),
         Function(Rc<RefCell<dyn RuntimeFunction>>),
-        Enum(LenarEnum<'a>),
-        Ref(Rc<RefCell<LenarValue<'a>>>),
+        Enum(LenarEnum),
+        Ref(Rc<RefCell<LenarValue>>),
     }
 
     /// Runtime values
@@ -514,25 +517,25 @@ pub mod runtime {
     }
 
     #[derive(Debug, Clone, Default)]
-    pub struct LenarEnum<'a>(HashMap<&'a str, LenarValue<'a>>);
+    pub struct LenarEnum(HashMap<String, LenarValue>);
 
-    impl<'a> LenarEnum<'a> {
-        pub fn new_with_variant(variant_name: &'a str, variant_value: LenarValue<'a>) -> Self {
+    impl LenarEnum {
+        pub fn new_with_variant(variant_name: String, variant_value: LenarValue) -> Self {
             let mut en = LenarEnum::default();
             en.0.insert(variant_name, variant_value);
             en
         }
 
-        pub fn peek_variant(&self, variant_name: &str) -> Option<&LenarValue<'a>> {
+        pub fn peek_variant(&self, variant_name: &str) -> Option<&LenarValue> {
             self.0.get(variant_name)
         }
 
-        pub fn get_variant(mut self, variant_name: &str) -> Option<LenarValue<'a>> {
+        pub fn get_variant(mut self, variant_name: &str) -> Option<LenarValue> {
             self.0.remove(variant_name)
         }
     }
 
-    impl Display for LenarEnum<'_> {
+    impl Display for LenarEnum {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.write_str(
                 &self
@@ -545,7 +548,7 @@ pub mod runtime {
         }
     }
 
-    impl Display for LenarValue<'_> {
+    impl Display for LenarValue {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             match self {
                 LenarValue::Usize(u) => f.write_str(&format!("{u}")),
@@ -554,6 +557,7 @@ pub mod runtime {
                     .value(&l.iter().map(|v| format!("{v}")))
                     .finish(),
                 LenarValue::Str(s) => f.write_str(s),
+                LenarValue::Byte(b) => f.write_str(from_utf8(&[*b]).unwrap()),
                 LenarValue::Bytes(b) => f.write_str(from_utf8(b).unwrap()),
                 LenarValue::OwnedBytes(b) => f.write_str(from_utf8(b).unwrap()),
                 LenarValue::Void => f.write_str("Void"),
@@ -566,7 +570,7 @@ pub mod runtime {
         }
     }
 
-    impl PartialEq for LenarValue<'_> {
+    impl PartialEq for LenarValue {
         fn eq(&self, other: &Self) -> bool {
             match (self, other) {
                 (Self::Usize(l0), Self::Usize(r0)) => l0 == r0,
@@ -583,7 +587,7 @@ pub mod runtime {
         }
     }
 
-    impl<'a> LenarValue<'a> {
+    impl LenarValue {
         pub fn is_void(&self) -> bool {
             matches!(self, Self::Void)
         }
@@ -596,13 +600,6 @@ pub mod runtime {
             }
         }
 
-        pub fn as_integer_mut(&mut self) -> Option<&mut usize> {
-            match self {
-                Self::Usize(v) => Some(v),
-                _ => None,
-            }
-        }
-
         pub fn as_integer(&self) -> Option<usize> {
             match self {
                 Self::Usize(v) => Some(*v),
@@ -610,11 +607,27 @@ pub mod runtime {
                 _ => None,
             }
         }
+
+        pub fn as_func(&self) -> Option<Rc<RefCell<dyn RuntimeFunction>>> {
+            match self {
+                Self::Function(v) => Some(v.clone()),
+                Self::Ref(v) => v.borrow().as_func(),
+                _ => None,
+            }
+        }
+
+        pub fn set_integer(&mut self, integer: usize) {
+            match self {
+                Self::Usize(v) => *v = integer,
+                Self::Ref(r) => r.borrow_mut().set_integer(integer),
+                _ => {}
+            }
+        }
     }
 
     /// Lenar special objects base
-    pub trait RuntimeInstance<'a>: Debug {
-        fn get_props(&self, path: &mut Iter<String>) -> LenarValue<'a> {
+    pub trait RuntimeInstance: Debug {
+        fn get_props(&self, path: &mut Iter<String>) -> LenarValue {
             let prop = path.next();
             if let Some(prop) = prop {
                 self.get_prop(prop)
@@ -623,35 +636,32 @@ pub mod runtime {
             }
         }
 
-        fn get_prop(&self, prop: &str) -> LenarValue<'a>;
+        fn get_prop(&self, prop: &str) -> LenarValue;
 
-        fn get_name<'s>(&self) -> &'s str;
+        fn get_name(&self) -> &str;
     }
 
     /// Lenar function base trait
     pub trait RuntimeFunction: Debug {
         /// Call the runtime function implementation
-        fn call<'s>(
-            &mut self,
-            _args: Vec<LenarValue<'s>>,
-            parser: &'s Arc<Parser>,
-        ) -> LenarResult<LenarValue<'s>>;
+        fn call(&mut self, _args: Vec<LenarValue>, parser: &Arc<Parser>)
+            -> LenarResult<LenarValue>;
 
         /// Get the function name
-        fn get_name<'s>(&self) -> &'s str;
+        fn get_name(&self) -> &str;
     }
 
     /// Runtime Scope that includes variables and nested Scopes.
     #[derive(Default)]
-    pub struct Scope<'a> {
+    pub struct Scope {
         thread_locks: Arc<Mutex<Slab<JoinHandle<()>>>>,
-        variables: HashMap<String, LenarValue<'a>>,
-        scopes: HashMap<usize, Scope<'a>>,
+        variables: HashMap<String, LenarValue>,
+        scopes: HashMap<usize, Scope>,
     }
 
-    impl<'a> Scope<'a> {
+    impl Scope {
         /// Add a [`RuntimeInstance`] to the global scope
-        pub fn add_global_instance(&mut self, val: impl RuntimeInstance<'a> + 'static) {
+        pub fn add_global_instance(&mut self, val: impl RuntimeInstance + 'static) {
             self.variables.insert(
                 val.get_name().to_owned(),
                 LenarValue::Instance(Rc::new(RefCell::new(val))),
@@ -682,11 +692,11 @@ pub mod runtime {
             }
 
             impl RuntimeFunction for ToStringFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     match args[0] {
                         LenarValue::Usize(rid) => {
                             let resources_files = self.resources_files.borrow_mut();
@@ -699,7 +709,7 @@ pub mod runtime {
                     }
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "toString"
                 }
             }
@@ -716,11 +726,11 @@ pub mod runtime {
             }
 
             impl RuntimeFunction for OpenFileFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     let file_path = args[0].as_bytes().unwrap();
                     let file_path = from_utf8(file_path).unwrap();
                     let file = File::open(file_path).unwrap();
@@ -731,7 +741,7 @@ pub mod runtime {
                     Ok(LenarValue::Usize(rid))
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "openFile"
                 }
             }
@@ -739,15 +749,15 @@ pub mod runtime {
             #[derive(Debug)]
             struct LenarGlobal;
 
-            impl<'a> RuntimeInstance<'a> for LenarGlobal {
-                fn get_prop(&self, prop: &str) -> LenarValue<'a> {
+            impl RuntimeInstance for LenarGlobal {
+                fn get_prop(&self, prop: &str) -> LenarValue {
                     match prop {
-                        "version" => LenarValue::Bytes("1.0.0".as_bytes()),
+                        "version" => LenarValue::Bytes("1.0.0".as_bytes().to_vec()),
                         _ => LenarValue::Void,
                     }
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "Lenar"
                 }
             }
@@ -761,6 +771,9 @@ pub mod runtime {
                     match value {
                         LenarValue::OwnedBytes(bts) => {
                             stdout().write(bts).ok();
+                        }
+                        LenarValue::Byte(b) => {
+                            stdout().write(&[*b]).ok();
                         }
                         LenarValue::Bytes(bts) => {
                             stdout().write(bts).ok();
@@ -797,11 +810,11 @@ pub mod runtime {
             }
 
             impl RuntimeFunction for PrintFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     for val in args {
                         Self::write(&val);
                     }
@@ -809,7 +822,7 @@ pub mod runtime {
                     Ok(LenarValue::Void)
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "print"
                 }
             }
@@ -819,11 +832,11 @@ pub mod runtime {
             struct PrintLnFunc;
 
             impl RuntimeFunction for PrintLnFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     for val in args {
                         PrintFunc::write(&val);
                     }
@@ -832,7 +845,7 @@ pub mod runtime {
                     Ok(LenarValue::Void)
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "println"
                 }
             }
@@ -842,11 +855,11 @@ pub mod runtime {
             struct IsEqual;
 
             impl RuntimeFunction for IsEqual {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     let args = args.get(0).zip(args.get(1));
                     let res = if let Some((a, b)) = args {
                         a.eq(b)
@@ -856,7 +869,7 @@ pub mod runtime {
                     Ok(LenarValue::Bool(res))
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "isEqual"
                 }
             }
@@ -866,15 +879,15 @@ pub mod runtime {
             struct NewListFunc;
 
             impl RuntimeFunction for NewListFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     Ok(LenarValue::List(args))
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "newList"
                 }
             }
@@ -892,11 +905,11 @@ pub mod runtime {
             }
 
             impl RuntimeFunction for IterFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    mut args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    mut args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     let iterator = args.remove(0);
                     let fun = args.remove(0);
 
@@ -910,7 +923,7 @@ pub mod runtime {
 
                                 for byte in bytes {
                                     if let Ok(byte) = byte {
-                                        fun.call(vec![LenarValue::Bytes(&[byte])], _parser)?;
+                                        fun.call(vec![LenarValue::Byte(byte)], _parser)?;
                                     } else {
                                         break;
                                     }
@@ -918,12 +931,12 @@ pub mod runtime {
                             }
                             LenarValue::Bytes(bytes) => {
                                 for byte in bytes {
-                                    fun.call(vec![LenarValue::Bytes(&[*byte])], _parser)?;
+                                    fun.call(vec![LenarValue::Byte(byte)], _parser)?;
                                 }
                             }
                             LenarValue::OwnedBytes(bytes) => {
                                 for byte in bytes {
-                                    fun.call(vec![LenarValue::Bytes(&[byte])], _parser)?;
+                                    fun.call(vec![LenarValue::Byte(byte)], _parser)?;
                                 }
                             }
                             LenarValue::List(items) => {
@@ -938,7 +951,7 @@ pub mod runtime {
                     Ok(LenarValue::Void)
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "iter"
                 }
             }
@@ -948,11 +961,11 @@ pub mod runtime {
             struct ThreadFunc;
 
             impl RuntimeFunction for ThreadFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    mut args: Vec<LenarValue<'s>>,
-                    parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    mut args: Vec<LenarValue>,
+                    parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     let fun = args.remove(0);
 
                     if let LenarValue::Function(fun) = fun {
@@ -963,7 +976,7 @@ pub mod runtime {
                     Ok(LenarValue::Void)
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "thread"
                 }
             }
@@ -973,11 +986,11 @@ pub mod runtime {
             struct SleepFunc;
 
             impl RuntimeFunction for SleepFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    mut args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    mut args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     let v = args.remove(0);
                     if let LenarValue::Usize(time) = v {
                         thread::sleep(Duration::from_millis(time as u64));
@@ -985,7 +998,7 @@ pub mod runtime {
                     Ok(LenarValue::Void)
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "sleep"
                 }
             }
@@ -1001,11 +1014,11 @@ pub mod runtime {
             }
 
             impl RuntimeFunction for WaitFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    mut args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    mut args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     let v = args.remove(0);
                     if let LenarValue::Usize(rid) = v {
                         let handle = self.0.lock().unwrap().remove(rid);
@@ -1014,7 +1027,7 @@ pub mod runtime {
                     Ok(LenarValue::Void)
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "wait"
                 }
             }
@@ -1024,16 +1037,19 @@ pub mod runtime {
             struct OkFunc;
 
             impl RuntimeFunction for OkFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    mut args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    mut args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     let v = args.remove(0);
-                    Ok(LenarValue::Enum(LenarEnum::new_with_variant("Ok", v)))
+                    Ok(LenarValue::Enum(LenarEnum::new_with_variant(
+                        "Ok".to_string(),
+                        v,
+                    )))
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "Ok"
                 }
             }
@@ -1043,16 +1059,19 @@ pub mod runtime {
             struct ErrFunc;
 
             impl RuntimeFunction for ErrFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    mut args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    mut args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     let v = args.remove(0);
-                    Ok(LenarValue::Enum(LenarEnum::new_with_variant("Err", v)))
+                    Ok(LenarValue::Enum(LenarEnum::new_with_variant(
+                        "Err".to_string(),
+                        v,
+                    )))
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "Err"
                 }
             }
@@ -1062,11 +1081,11 @@ pub mod runtime {
             struct IsOkFunc;
 
             impl RuntimeFunction for IsOkFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    mut args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    mut args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     let v = args.remove(0);
                     match v {
                         LenarValue::Enum(variants) => {
@@ -1077,7 +1096,7 @@ pub mod runtime {
                     }
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "isOk"
                 }
             }
@@ -1087,11 +1106,11 @@ pub mod runtime {
             struct UnwrapFunc;
 
             impl RuntimeFunction for UnwrapFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    mut args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    mut args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     let value = args.remove(0);
                     match value {
                         LenarValue::Enum(variants) => {
@@ -1102,7 +1121,7 @@ pub mod runtime {
                     }
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "unwrap"
                 }
             }
@@ -1112,11 +1131,11 @@ pub mod runtime {
             struct UnwrapErrFunc;
 
             impl RuntimeFunction for UnwrapErrFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    mut args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    mut args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     let value = args.remove(0);
                     match value {
                         LenarValue::Enum(variants) => {
@@ -1127,7 +1146,7 @@ pub mod runtime {
                     }
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "unwrapErr"
                 }
             }
@@ -1137,16 +1156,16 @@ pub mod runtime {
             struct RefFunc;
 
             impl RuntimeFunction for RefFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    mut args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    mut args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     let v = args.remove(0);
                     Ok(LenarValue::Ref(Rc::new(RefCell::new(v))))
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "ref"
                 }
             }
@@ -1156,21 +1175,26 @@ pub mod runtime {
             struct AddFunc;
 
             impl RuntimeFunction for AddFunc {
-                fn call<'s>(
+                fn call(
                     &mut self,
-                    mut args: Vec<LenarValue<'s>>,
-                    _parser: &'s Arc<Parser>,
-                ) -> LenarResult<LenarValue<'s>> {
+                    mut args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
                     let value = args.remove(0);
                     let increment = args.remove(0);
+
                     let result = match value {
                         LenarValue::Ref(value) => {
                             let mut value = value.borrow_mut();
-                            let value = value.as_integer_mut();
                             let increment = increment.as_integer();
-                            if let Some((value, increment)) = value.zip(increment) {
-                                *value += increment;
-                                LenarValue::Usize(*value)
+                            if let Some(increment) = increment {
+                                value.set_integer(increment);
+
+                                if let Some(n) = value.as_integer() {
+                                    LenarValue::Usize(n)
+                                } else {
+                                    LenarValue::Void
+                                }
                             } else {
                                 LenarValue::Void
                             }
@@ -1180,7 +1204,7 @@ pub mod runtime {
                     Ok(result)
                 }
 
-                fn get_name<'s>(&self) -> &'s str {
+                fn get_name(&self) -> &str {
                     "add"
                 }
             }
@@ -1266,7 +1290,7 @@ pub mod runtime {
         }
 
         /// Get a mutable handle scope to the desired [`Scope`]
-        pub fn get_scope(&mut self, path: &mut Iter<usize>) -> &mut Scope<'a> {
+        pub fn get_scope(&mut self, path: &mut Iter<usize>) -> &mut Scope {
             let scope = path.next();
 
             if let Some(scope) = scope {
@@ -1294,12 +1318,8 @@ pub mod runtime {
                 }
             }
 
-            let func = self.variables.get(name.as_ref());
-            if let Some(LenarValue::Function(func)) = func {
-                Some(func.clone())
-            } else {
-                None
-            }
+            let variable = self.variables.get(name.as_ref())?;
+            variable.as_func()
         }
 
         /// Call a function given a name, a scope ID and arguments
@@ -1307,9 +1327,9 @@ pub mod runtime {
             &mut self,
             name: impl AsRef<str>,
             path: &mut Iter<usize>,
-            args: Vec<LenarValue<'a>>,
-            parser: &'a Arc<Parser>,
-        ) -> LenarResult<LenarValue<'a>> {
+            args: Vec<LenarValue>,
+            parser: &Arc<Parser>,
+        ) -> LenarResult<LenarValue> {
             let func_name = name.as_ref().to_string();
             let func = self.get_function(name, path);
 
@@ -1326,7 +1346,7 @@ pub mod runtime {
             &mut self,
             name: impl AsRef<str>,
             scope_path: &[usize],
-            value: LenarValue<'a>,
+            value: LenarValue,
         ) {
             let scope = self.get_scope(&mut scope_path.iter());
             scope.variables.insert(name.as_ref().to_string(), value);
@@ -1337,7 +1357,7 @@ pub mod runtime {
             &mut self,
             name: impl AsRef<str>,
             path: &mut Iter<usize>,
-        ) -> LenarResult<LenarValue<'a>> {
+        ) -> LenarResult<LenarValue> {
             let scope = path.next();
 
             if let Some(scope) = scope {
@@ -1369,9 +1389,9 @@ pub mod runtime {
 
         pub fn get_variable_by_path(
             &mut self,
-            var_path: &'a [String],
+            var_path: &[String],
             path: &mut Iter<usize>,
-        ) -> LenarResult<LenarValue<'a>> {
+        ) -> LenarResult<LenarValue> {
             let scope = path.next();
             if let Some(scope) = scope {
                 let result = self
@@ -1413,12 +1433,12 @@ pub mod runtime {
     }
 
     /// Evaluate a [`ParserObject`] to a [`LenarValue`]
-    fn evaluate_object<'a>(
-        object: &'a ParserObject,
-        parser: &'a Arc<Parser>,
-        scope: &mut Scope<'a>,
+    fn evaluate_object(
+        object: &ParserObject,
+        parser: &Arc<Parser>,
+        scope: &mut Scope,
         scope_path: &[usize],
-    ) -> LenarResult<LenarValue<'a>> {
+    ) -> LenarResult<LenarValue> {
         match object {
             ParserObject::Block { objects } => {
                 let mut next_scope_id = scope_path.last().copied().unwrap_or(0);
@@ -1503,8 +1523,8 @@ pub mod runtime {
                     scope.call_function(fn_name, &mut scope_path.iter(), args, parser)
                 }
             }
-            ParserObject::StringVal { value } => Ok(LenarValue::Str(value)),
-            ParserObject::BytesVal { value } => Ok(LenarValue::Bytes(value)),
+            ParserObject::StringVal { value } => Ok(LenarValue::Str(value.to_string())), // TODO: Optimize this
+            ParserObject::BytesVal { value } => Ok(LenarValue::Bytes(value.to_owned())), // TODO: Optimize this
             ParserObject::VarRef { var_name } => {
                 scope.get_variable(var_name, &mut scope_path.iter())
             }
@@ -1514,24 +1534,23 @@ pub mod runtime {
             ParserObject::FnDef {
                 arguments_block,
                 block_value,
-                capture_value
+                capture_value,
             } => {
                 let capture_area_value = parser.get_object(*capture_value);
-                
+
                 let capture_area = {
                     let mut capture_area = HashMap::default();
                     if let Some(ParserObject::Block { objects }) = capture_area_value {
                         for object_key in objects {
                             let object_value = parser.get_object(*object_key);
-                            if let Some(object_value) = object_value {
-                               if let ParserObject::VarRef { var_name } = object_value {
-                                let var = scope.get_variable(var_name, &mut scope_path.iter())?;
-                                let b = var.clone();
-                                capture_area.insert(var_name.clone(), LenarValue::Ref(Rc::new(RefCell::new(b))));
-                               }
-                               
+                            if let Some(ParserObject::VarRef { var_name }) = object_value {
+                                let var_value =
+                                    scope.get_variable(var_name, &mut scope_path.iter())?;
+                                capture_area.insert(
+                                    var_name.clone(),
+                                    LenarValue::Ref(Rc::new(RefCell::new(var_value))),
+                                );
                             }
-                            
                         }
                     }
                     capture_area
@@ -1539,24 +1558,19 @@ pub mod runtime {
 
                 // Anonymous function created at runtime
                 #[derive(Debug)]
-                struct Function<'a> {
-                    capture_area: HashMap<String, LenarValue<'a>>,
+                struct Function {
+                    capture_area: HashMap<String, LenarValue>,
                     arguments_block: usize,
                     block_value: usize,
                 }
 
-                println!("{}", capture_value);
-
-                impl<'a> RuntimeFunction for Function<'a> {
-                    fn call<'s>(
+                impl RuntimeFunction for Function {
+                    fn call(
                         &mut self,
-                        mut args: Vec<LenarValue<'s>>,
-                        parser: &'s Arc<Parser>,
-                    ) -> LenarResult<LenarValue<'s>> {
-                        // Anonymous functions do not inherit any scope,
-                        // instead, they only have their own global scope,
-                        // This means, you cannot reference variables from outside
-                        // this scope, you can pass them as arguments though.
+                        mut args: Vec<LenarValue>,
+                        parser: &Arc<Parser>,
+                    ) -> LenarResult<LenarValue> {
+                        // Anonymous functions do not capture any values by default.
                         let mut scope = Scope::default();
 
                         scope.setup_globals();
@@ -1573,12 +1587,19 @@ pub mod runtime {
                             }
                         }
 
+                        // Inject every captured value in the function scope
+                        for (captured_var, value) in self.capture_area.iter() {
+                            scope
+                                .variables
+                                .insert(captured_var.to_owned(), value.clone());
+                        }
+
                         let block_object = parser.get_object(self.block_value).unwrap();
 
                         evaluate_object(block_object, parser, &mut scope, &[])
                     }
 
-                    fn get_name<'s>(&self) -> &'s str {
+                    fn get_name(&self) -> &str {
                         "Anonymous"
                     }
                 }
