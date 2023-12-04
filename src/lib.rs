@@ -1209,6 +1209,34 @@ pub mod runtime {
                 }
             }
 
+            // not()
+            #[derive(Debug)]
+            struct NotFunc;
+
+            impl RuntimeFunction for NotFunc {
+                fn call(
+                    &mut self,
+                    mut args: Vec<LenarValue>,
+                    _parser: &Arc<Parser>,
+                ) -> LenarResult<LenarValue> {
+                    let cond = args.remove(0);
+
+                    let result = match cond {
+                        LenarValue::Bool(cond) => LenarValue::Bool(!cond),
+                        _ => LenarValue::Void, // TODO: Should throw error.
+                    };
+                    Ok(result)
+                }
+
+                fn get_name(&self) -> &str {
+                    "not"
+                }
+            }
+
+            self.variables.insert(
+                "not".to_string(),
+                LenarValue::Function(Rc::new(RefCell::new(NotFunc))),
+            );
             self.variables.insert(
                 "add".to_string(),
                 LenarValue::Function(Rc::new(RefCell::new(AddFunc))),
