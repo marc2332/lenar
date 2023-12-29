@@ -1,5 +1,5 @@
 pub mod parser {
-    use std::{iter::Peekable, str::Chars, sync::Arc};
+    use std::{iter::Peekable, str::Chars};
 
     pub use slab::Slab;
 
@@ -56,6 +56,14 @@ pub mod parser {
         pub fn add_object(&mut self, object: ParserObjectKey) {
             if let ParserObject::Block { objects } = self {
                 objects.push(object);
+            }
+        }
+
+        pub fn objects(&self) -> Option<&[ParserObjectKey]> {
+            if let Self::Block { objects } = self {
+                Some(objects)
+            } else {
+                None
             }
         }
     }
@@ -134,11 +142,6 @@ pub mod parser {
             parser.parse(code);
 
             parser
-        }
-
-        /// Wrap into an [Arc]
-        pub fn wrap(self) -> Arc<Self> {
-            Arc::new(self)
         }
 
         /// Parse additional code
@@ -455,8 +458,7 @@ pub mod runtime {
     use std::fs::File;
     use std::io::Read;
     use std::str::from_utf8;
-    use std::sync::{Arc, Mutex};
-    use std::thread::{self, JoinHandle};
+    use std::thread::{self};
     use std::time::Duration;
     use std::{
         collections::HashMap,
@@ -470,25 +472,59 @@ pub mod runtime {
 
     pub type LenarResult<T> = Result<T, LenarError>;
 
+    pub struct Execution {
+        pub result: LenarResult<LenarValue>,
+        pub scope_position: usize,
+    }
+
     /// A interpreter given a Parser
     pub struct Runtime;
 
     impl Runtime {
-        pub fn run_with_scope(scope: &mut Scope, parser: &Arc<Parser>) -> LenarResult<LenarValue> {
+        pub fn run_with_scope(scope: &mut Scope, parser: &Parser) -> Execution {
             let global_block = parser.get_object(parser.get_global()).unwrap();
-            evaluate_object(global_block, parser, scope, &[])
+            let result = evaluate_object(global_block, parser, scope, &[], None);
+
+            let global_block = parser.get_object(parser.get_global()).unwrap();
+            let objects = global_block
+                .objects()
+                .expect("This is impossible, the global scope is always a block");
+
+            Execution {
+                result,
+                scope_position: objects.len(),
+            }
+        }
+
+        pub fn resume_execution(
+            scope: &mut Scope,
+            parser: &Parser,
+            scope_position: usize,
+        ) -> Execution {
+            let global_block = parser.get_object(parser.get_global()).unwrap();
+            let result = evaluate_object(global_block, parser, scope, &[], Some(scope_position));
+
+            let global_block = parser.get_object(parser.get_global()).unwrap();
+            let objects = global_block
+                .objects()
+                .expect("This is impossible, the global scope is always a block");
+
+            Execution {
+                result,
+                scope_position: objects.len(),
+            }
         }
 
         /// Evaluate the runtime code and return the exit value
-        pub fn evaluate(parser: &Arc<Parser>) -> LenarResult<LenarValue> {
+        pub fn evaluate(parser: &Parser) -> LenarResult<LenarValue> {
             let mut scope = Scope::default();
             scope.setup_globals();
 
-            Self::run_with_scope(&mut scope, parser)
+            Self::run_with_scope(&mut scope, parser).result
         }
 
         pub fn run(code: &str) {
-            let parser = Arc::new(Parser::new(code));
+            let parser = Parser::new(code);
             Self::evaluate(&parser).ok();
         }
     }
@@ -645,8 +681,7 @@ pub mod runtime {
     /// Lenar function base trait
     pub trait RuntimeFunction: Debug {
         /// Call the runtime function implementation
-        fn call(&mut self, _args: Vec<LenarValue>, parser: &Arc<Parser>)
-            -> LenarResult<LenarValue>;
+        fn call(&mut self, _args: Vec<LenarValue>, parser: &Parser) -> LenarResult<LenarValue>;
 
         /// Get the function name
         fn get_name(&self) -> &str;
@@ -655,7 +690,6 @@ pub mod runtime {
     /// Runtime Scope that includes variables and nested Scopes.
     #[derive(Default)]
     pub struct Scope {
-        thread_locks: Arc<Mutex<Slab<JoinHandle<()>>>>,
         variables: HashMap<String, LenarValue>,
         scopes: HashMap<usize, Scope>,
     }
@@ -696,7 +730,7 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
                     match args[0] {
                         LenarValue::Usize(rid) => {
@@ -730,7 +764,7 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
                     let file_path = args[0].as_bytes().unwrap();
                     let file_path = from_utf8(file_path).unwrap();
@@ -814,7 +848,7 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
                     for val in args {
                         Self::write(&val);
@@ -836,7 +870,7 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
                     for val in args {
                         PrintFunc::write(&val);
@@ -859,9 +893,9 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
-                    let args = args.get(0).zip(args.get(1));
+                    let args = args.first().zip(args.get(1));
                     let res = if let Some((a, b)) = args {
                         a.eq(b)
                     } else {
@@ -883,7 +917,7 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
                     Ok(LenarValue::List(args))
                 }
@@ -909,7 +943,7 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     mut args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
                     let iterator = args.remove(0);
                     let fun = args.remove(0);
@@ -957,31 +991,6 @@ pub mod runtime {
                 }
             }
 
-            // thread()
-            #[derive(Debug)]
-            struct ThreadFunc;
-
-            impl RuntimeFunction for ThreadFunc {
-                fn call(
-                    &mut self,
-                    mut args: Vec<LenarValue>,
-                    parser: &Arc<Parser>,
-                ) -> LenarResult<LenarValue> {
-                    let fun = args.remove(0);
-
-                    if let LenarValue::Function(fun) = fun {
-                        let mut fun = fun.borrow_mut();
-                        fun.call(args, parser)?;
-                    }
-
-                    Ok(LenarValue::Void)
-                }
-
-                fn get_name(&self) -> &str {
-                    "thread"
-                }
-            }
-
             // sleep()
             #[derive(Debug)]
             struct SleepFunc;
@@ -990,7 +999,7 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     mut args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
                     let v = args.remove(0);
                     if let LenarValue::Usize(time) = v {
@@ -1004,35 +1013,6 @@ pub mod runtime {
                 }
             }
 
-            // wait()
-            #[derive(Debug)]
-            struct WaitFunc(Arc<Mutex<Slab<JoinHandle<()>>>>);
-
-            impl WaitFunc {
-                pub fn new(locks: Arc<Mutex<Slab<JoinHandle<()>>>>) -> Self {
-                    Self(locks)
-                }
-            }
-
-            impl RuntimeFunction for WaitFunc {
-                fn call(
-                    &mut self,
-                    mut args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
-                ) -> LenarResult<LenarValue> {
-                    let v = args.remove(0);
-                    if let LenarValue::Usize(rid) = v {
-                        let handle = self.0.lock().unwrap().remove(rid);
-                        handle.join().unwrap();
-                    }
-                    Ok(LenarValue::Void)
-                }
-
-                fn get_name(&self) -> &str {
-                    "wait"
-                }
-            }
-
             // Ok()
             #[derive(Debug)]
             struct OkFunc;
@@ -1041,7 +1021,7 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     mut args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
                     let v = args.remove(0);
                     Ok(LenarValue::Enum(LenarEnum::new_with_variant(
@@ -1063,7 +1043,7 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     mut args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
                     let v = args.remove(0);
                     Ok(LenarValue::Enum(LenarEnum::new_with_variant(
@@ -1085,7 +1065,7 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     mut args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
                     let v = args.remove(0);
                     match v {
@@ -1110,7 +1090,7 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     mut args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
                     let value = args.remove(0);
                     match value {
@@ -1135,7 +1115,7 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     mut args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
                     let value = args.remove(0);
                     match value {
@@ -1160,7 +1140,7 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     mut args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
                     let v = args.remove(0);
                     Ok(LenarValue::Ref(Rc::new(RefCell::new(v))))
@@ -1179,7 +1159,7 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     mut args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
                     let value = args.remove(0);
                     let increment = args.remove(0);
@@ -1218,7 +1198,7 @@ pub mod runtime {
                 fn call(
                     &mut self,
                     mut args: Vec<LenarValue>,
-                    _parser: &Arc<Parser>,
+                    _parser: &Parser,
                 ) -> LenarResult<LenarValue> {
                     let cond = args.remove(0);
 
@@ -1267,18 +1247,8 @@ pub mod runtime {
                 LenarValue::Function(Rc::new(RefCell::new(OkFunc))),
             );
             self.variables.insert(
-                "wait".to_string(),
-                LenarValue::Function(Rc::new(RefCell::new(WaitFunc::new(
-                    self.thread_locks.clone(),
-                )))),
-            );
-            self.variables.insert(
                 "sleep".to_string(),
                 LenarValue::Function(Rc::new(RefCell::new(SleepFunc))),
-            );
-            self.variables.insert(
-                "thread".to_string(),
-                LenarValue::Function(Rc::new(RefCell::new(ThreadFunc))),
             );
             self.variables.insert(
                 "list".to_string(),
@@ -1357,7 +1327,7 @@ pub mod runtime {
             name: impl AsRef<str>,
             path: &mut Iter<usize>,
             args: Vec<LenarValue>,
-            parser: &Arc<Parser>,
+            parser: &Parser,
         ) -> LenarResult<LenarValue> {
             let func_name = name.as_ref().to_string();
             let func = self.get_function(name, path);
@@ -1464,15 +1434,21 @@ pub mod runtime {
     /// Evaluate a [`ParserObject`] to a [`LenarValue`]
     fn evaluate_object(
         object: &ParserObject,
-        parser: &Arc<Parser>,
+        parser: &Parser,
         scope: &mut Scope,
         scope_path: &[usize],
+        scope_position: Option<usize>,
     ) -> LenarResult<LenarValue> {
         match object {
             ParserObject::Block { objects } => {
+                if objects.is_empty() {
+                    return Ok(LenarValue::Void);
+                }
+
+                let scope_position = scope_position.unwrap_or(0);
                 let mut next_scope_id = scope_path.last().copied().unwrap_or(0);
 
-                for (i, tok) in objects.iter().enumerate() {
+                for (i, tok) in objects[scope_position..objects.len()].iter().enumerate() {
                     let is_last = i == objects.len() - 1;
                     let tok = parser.get_object(*tok).unwrap();
                     let res = if matches!(tok, ParserObject::Block { .. }) {
@@ -1482,14 +1458,14 @@ pub mod runtime {
 
                         // Run the block expression in the new scope
                         let scope_path = &[scope_path, &[next_scope_id]].concat();
-                        let return_val = evaluate_object(tok, parser, scope, scope_path);
+                        let return_val = evaluate_object(tok, parser, scope, scope_path, None);
 
                         // Remove the scope
                         scope.drop_scope(scope_path, next_scope_id);
                         return_val
                     } else {
                         // Run the expression in the inherited scope
-                        evaluate_object(tok, parser, scope, scope_path)
+                        evaluate_object(tok, parser, scope, scope_path, None)
                     };
 
                     // Return the returned value from the expression as result of this block
@@ -1505,52 +1481,24 @@ pub mod runtime {
                 block_value,
             } => {
                 let value = parser.get_object(*block_value).unwrap();
-                let res = evaluate_object(value, parser, scope, scope_path)?;
+                let res = evaluate_object(value, parser, scope, scope_path, None)?;
                 scope.define_variable(var_name, scope_path, res);
 
                 Ok(LenarValue::Void)
             }
             ParserObject::FunctionCall { arguments, fn_name } => {
-                if fn_name == "thread" {
-                    let parser = parser.clone();
-                    let arguments = *arguments;
-                    let fn_name = fn_name.clone();
+                let value = parser.get_object(*arguments).unwrap();
+                let mut args = Vec::new();
+                if let ParserObject::Block { objects } = value {
+                    for tok in objects {
+                        let tok = parser.get_object(*tok).unwrap();
+                        let res = evaluate_object(tok, parser, scope, scope_path, None)?;
 
-                    let handle = thread::spawn(move || {
-                        let mut scope = Scope::default();
-
-                        scope.setup_globals();
-                        let value = parser.get_object(arguments).unwrap();
-                        let mut args = Vec::new();
-                        if let ParserObject::Block { objects } = value {
-                            for tok in objects {
-                                let tok = parser.get_object(*tok).unwrap();
-                                let res = evaluate_object(tok, &parser, &mut scope, &[]).unwrap();
-
-                                args.push(res);
-                            }
-                        }
-
-                        scope
-                            .call_function(fn_name, &mut [].iter(), args, &parser)
-                            .unwrap();
-                    });
-                    let id = scope.thread_locks.lock().unwrap().insert(handle);
-                    Ok(LenarValue::Usize(id))
-                } else {
-                    let value = parser.get_object(*arguments).unwrap();
-                    let mut args = Vec::new();
-                    if let ParserObject::Block { objects } = value {
-                        for tok in objects {
-                            let tok = parser.get_object(*tok).unwrap();
-                            let res = evaluate_object(tok, parser, scope, scope_path)?;
-
-                            args.push(res);
-                        }
+                        args.push(res);
                     }
-
-                    scope.call_function(fn_name, &mut scope_path.iter(), args, parser)
                 }
+
+                scope.call_function(fn_name, &mut scope_path.iter(), args, parser)
             }
             ParserObject::StringVal { value } => Ok(LenarValue::Str(value.to_string())), // TODO: Optimize this
             ParserObject::BytesVal { value } => Ok(LenarValue::Bytes(value.to_owned())), // TODO: Optimize this
@@ -1597,7 +1545,7 @@ pub mod runtime {
                     fn call(
                         &mut self,
                         mut args: Vec<LenarValue>,
-                        parser: &Arc<Parser>,
+                        parser: &Parser,
                     ) -> LenarResult<LenarValue> {
                         // Anonymous functions do not capture any values by default.
                         let mut scope = Scope::default();
@@ -1625,7 +1573,7 @@ pub mod runtime {
 
                         let block_object = parser.get_object(self.block_value).unwrap();
 
-                        evaluate_object(block_object, parser, &mut scope, &[])
+                        evaluate_object(block_object, parser, &mut scope, &[], None)
                     }
 
                     fn get_name(&self) -> &str {
@@ -1643,13 +1591,13 @@ pub mod runtime {
                 block_value,
             } => {
                 let expr_object = parser.get_object(*expr).unwrap();
-                let expr_res = evaluate_object(expr_object, parser, scope, scope_path)?;
+                let expr_res = evaluate_object(expr_object, parser, scope, scope_path, None)?;
 
                 // If the condition expression returns a `true` it
                 // will evaluate the actual block
                 if LenarValue::Bool(true) == expr_res {
                     let expr_body_object = parser.get_object(*block_value).unwrap();
-                    evaluate_object(expr_body_object, parser, scope, scope_path)
+                    evaluate_object(expr_body_object, parser, scope, scope_path, None)
                 } else {
                     Ok(LenarValue::Void)
                 }

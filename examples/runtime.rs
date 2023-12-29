@@ -27,7 +27,7 @@ fn main() {
         println(value);
     "#;
 
-    let parser = Parser::new(&code).wrap();
+    let parser = Parser::new(&code);
 
     Runtime::evaluate(&parser).unwrap();
 }

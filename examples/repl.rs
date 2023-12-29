@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use ansi_term::{Color, Style};
 use lenar::*;
 use reedline::{DefaultPrompt, DefaultPromptSegment, Reedline, Signal};
@@ -12,53 +10,53 @@ fn main() {
     struct ClearFunc;
 
     impl RuntimeFunction for ClearFunc {
-        fn call<'s>(
+        fn call(
             &mut self,
-            _args: Vec<LenarValue<'s>>,
-            _objects_map: &'s Arc<Parser>,
-        ) -> LenarResult<LenarValue<'s>> {
+            _args: Vec<LenarValue>,
+            _objects_map: &Parser,
+        ) -> LenarResult<LenarValue> {
             print!("\x1B[2J\x1B[1;1H");
             Ok(LenarValue::Void)
         }
 
-        fn get_name<'s>(&self) -> &'s str {
+        fn get_name(&self) -> &str {
             "clear"
         }
     }
-
-    let mut code = "".to_string();
-
     let mut line_editor = Reedline::create();
     let prompt = DefaultPrompt::new(
         DefaultPromptSegment::Basic(">".to_string()),
         DefaultPromptSegment::Empty,
     );
 
+    let mut parser = Parser::new("");
+
+    let mut scope = Scope::default();
+    scope.setup_globals();
+    scope.add_global_function(ClearFunc);
+
+    let mut execution = Runtime::run_with_scope(&mut scope, &parser);
+
     loop {
         let sig = line_editor.read_line(&prompt);
         match sig {
             Ok(Signal::Success(buffer)) => {
-                code.push_str(&buffer);
+                parser.parse(&buffer);
 
-                let parser = Parser::new(&code).wrap();
+                execution =
+                    Runtime::resume_execution(&mut scope, &parser, execution.scope_position);
 
-                let mut scope = Scope::default();
-                scope.setup_globals();
-                scope.add_global_function(ClearFunc);
-
-                let res = Runtime::run_with_scope(&mut scope, &parser);
-
-                if let Ok(res) = res {
+                if let Ok(res) = execution.result {
                     println!(
                         "{}",
                         Style::new()
                             .fg(Color::RGB(190, 190, 190))
                             .paint(res.to_string())
                     );
-                } else if let Err(res) = res {
+                } else if let Err(err) = execution.result {
                     println!(
                         "Error: {}",
-                        Style::new().fg(Color::Red).paint(format!("{res:?}"))
+                        Style::new().fg(Color::Red).paint(format!("{err:?}"))
                     );
                 }
             }
