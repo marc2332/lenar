@@ -1,25 +1,26 @@
 # 🌑 lenar
 
-lenar is a interpreted and toy programming language, written in Rust 🦀
+**lenar** is a interpreted and toy programming language, written in Rust 🦀.
 
 > ⚠️ I am not an expert in this area.
 
 ```rust
-if(isEqual("test" "test")) {
-    let something = fn(v) {
-        println(Lenar.version);
-        "hi"
-    };
-    println(something("hey"));
+println("Running -> " Lenar.version);
+
+let speak = fn(msg) [] {
+    println(msg);
+    "Hey!"
 };
 
-println(if(isEqual("test" "test")) { "wow" });
+println(speak("Hello?"));
+
+if(isEqual(1 1)) {
+    println(speak("Hello again!"));
+}
 ```
 
-- 1 dependency
-- Easy to embed and extend
-- Lightweight
-- Simple multithreading
-- Non-garbage collected
+- 📦 1 dependency
+- 🧩Easy to embed and extend
+- 🪶Lightweight
 
 [MIT License](./LICENSE.md)

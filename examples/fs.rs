@@ -9,13 +9,13 @@ fn main() {
     let code = r#"
         let file = openFile("examples/fs.rs");
         
-        iter(file fn(byte){
+        iter(file fn(byte) [] {
             print(byte);
         });
 
-        let list = newList(15 19 8 14);
+        let list = list(15 19 8 14);
 
-        iter(list fn(number index){
+        iter(list fn(number index) []{
             println(index "-" number)
         });
     "#;
