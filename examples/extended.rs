@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use lenar::*;
 
 fn main() {
@@ -10,7 +8,7 @@ fn main() {
         coolFunc(coolInstance.hey);
     "#;
 
-    let parser = Parser::new(&code).wrap();
+    let parser = Parser::new(&code);
 
     let mut scope = Scope::default();
     scope.setup_globals();
@@ -39,7 +37,7 @@ fn main() {
         fn call(
             &mut self,
             mut args: Vec<LenarValue>,
-            _objects_map: &Arc<Parser>,
+            _objects_map: &Parser,
         ) -> LenarResult<LenarValue> {
             let val = args.remove(0);
             let val = val.to_string();
@@ -55,5 +53,5 @@ fn main() {
     scope.add_global_function(CoolFunc);
     scope.add_global_instance(CoolInstance);
 
-    Runtime::run_with_scope(&mut scope, &parser).unwrap();
+    Runtime::run_with_scope(&mut scope, &parser).result.unwrap();
 }

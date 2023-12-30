@@ -12,6 +12,8 @@ slab = "0.4"
 
 [dev-dependencies]
 criterion = "0.4.0"
+ansi_term = "0.12.1"
+reedline = "0.19.1"
 
 [[bench]]
 name = "parser"
